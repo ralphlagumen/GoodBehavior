@@ -5,7 +5,6 @@
   "installedAt": "2026-01-01T00:00:00Z",
   "updatedAt": null,
   "files": {
-    ".claude/skills/adopt-goodbehavior/SKILL.md":      { "from": ".claude/skills/adopt-goodbehavior/SKILL.md",      "sha256": "" },
     ".claude/skills/audit-goodbehavior/SKILL.md":      { "from": ".claude/skills/audit-goodbehavior/SKILL.md",      "sha256": "" },
     ".claude/skills/roadmap-goodbehavior/SKILL.md":    { "from": ".claude/skills/roadmap-goodbehavior/SKILL.md",    "sha256": "" },
     ".claude/skills/gate-build-goodbehavior/SKILL.md": { "from": ".claude/skills/gate-build-goodbehavior/SKILL.md", "sha256": "" },
@@ -13,6 +12,7 @@
     ".claude/skills/uatplan-goodbehavior/SKILL.md":    { "from": ".claude/skills/uatplan-goodbehavior/SKILL.md",    "sha256": "" },
     ".claude/skills/learn-goodbehavior/SKILL.md":      { "from": ".claude/skills/learn-goodbehavior/SKILL.md",      "sha256": "" },
     ".claude/skills/update-goodbehavior/SKILL.md":     { "from": ".claude/skills/update-goodbehavior/SKILL.md",     "sha256": "" },
-    ".claude/hooks/done-gate.py":                      { "from": ".claude/hooks/done-gate.py",                      "sha256": "" }
+    ".claude/hooks/done-gate.py":                      { "from": ".claude/hooks/done-gate.py",                      "sha256": "" },
+    ".claude/goodbehavior/profiles/development.md":    { "from": "templates/profiles/development.md",               "sha256": "" }
   }
 }

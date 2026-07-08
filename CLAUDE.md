@@ -7,9 +7,11 @@ done. Don't do that.
 ## The one rule: what "done" means
 
 **Done = the real thing works, end to end, with evidence — and the user has confirmed it.** Not a passing spec. Not a
-screenshot. Not your narration that it works. No single artifact is "the test." A change is done when the actual
-behavior — through the real UI *and* the real backend, exercised like a user would — matches the intent, and you can
-show it.
+screenshot. Not your narration that it works. No single artifact is "the test." A change is done when the real thing —
+**exercised the way its consumer would** — matches the intent, and you can show it. What "the real thing," "exercise
+it," and "evidence" concretely mean is set by the project's **profile** (see `.claude/goodbehavior/profiles/`): running
+software driven like a user; a dataset validated on real input; claims re-checked against their sources; a deck
+experienced as its audience would. The discipline is identical; only those three slots change by project type.
 
 Until then, the honest status is **"not done yet."** Default to that. Never self-declare done.
 
@@ -49,9 +51,10 @@ diagnosing; a recorded learning beats re-deriving.
 
 The right build / run / deploy / test / verify workflow is **project- and team-specific** — there's no universal
 default. Some teams run everything in Docker even in dev; others run natively. Package managers, deploy steps,
-hot-reload, and how you exercise the app all differ by language and platform. So when adopting a project (or whenever
-the workflow is unclear): **discover it from the codebase, propose what you found with a recommendation, and confirm
-with the user** before committing to it. Then record the agreed conventions so later steps follow them, not a guess.
+hot-reload, and how you exercise the real thing all differ by language, platform, and project *type*. So when adopting a
+project (or whenever the workflow is unclear): **discover it from the codebase, propose what you found with a
+recommendation, and confirm with the user** before committing to it — including the project's **profile** (what "the real
+thing / verify / evidence" mean here). Then record the agreed conventions so later steps follow them, not a guess.
 
 ## Reuse before you build
 

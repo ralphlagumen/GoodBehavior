@@ -1,20 +1,26 @@
 ---
 name: verify-goodbehavior
-description: Verify a change by exercising the REAL behavior — run the app and drive the actual flow (UI + backend) like a user, then capture evidence. Self-contained (no dependency on other skills). Use to confirm a change works before calling it done; a passing test alone does not count.
+description: Verify a change by exercising the REAL thing the way its consumer would — per the project's profile (running app, dataset, findings, or delivered artifact) — then capture evidence. Self-contained (no dependency on other skills). Use to confirm a change works before calling it done; a passing test alone does not count.
 ---
 
-Prove a change actually does what it's supposed to by observing real behavior — not by reading the diff, not by a green
+Prove a change actually does what it's supposed to by observing the real thing — not by reading the diff, not by a green
 test, not by describing it. This skill is self-contained: it does not call other skills.
 
+**Read the project's profile first** (`.claude/goodbehavior/profiles/` and the `project-profile` memory) — it defines
+**the-real-thing / verify / evidence** for this project's type. The steps below are the development instantiation; for a
+non-dev profile, substitute that profile's slots (e.g. re-run on real data + validate; re-check claims vs sources;
+walk the delivered artifact + fact-check it). The procedure shape is the same; what you run and what counts changes.
+
 ## Procedure
-1. **Know the intended behavior** — what should a user see/get after this change? State it in one sentence.
-2. **Run the real thing** — start/serve/deploy the app the project's real way (see CLAUDE.md "stack" notes /
-   `build-deploy-gotchas`). Confirm you're hitting the **current build**, not a stale cache/old bundle.
-3. **Drive the actual flow** — perform the user's steps end to end (navigate, fill, submit, click), through the UI and
-   the backend it calls. Use whatever's available: a browser/automation tool, the running app, real requests.
-4. **Capture evidence** — a screenshot/recording of the result (ideally beside the reference), and/or the real
-   response/output showing the flow fired (e.g. the record was created, the count changed, the state advanced).
-5. **Compare to intent** — does the observed behavior match step 1 and the reference? Note any delta.
+1. **Know the intended behavior** — what should the consumer see/get after this change? State it in one sentence.
+2. **Produce the real thing** — run/serve/build/render it the project's real way per the profile (see CLAUDE.md "stack"
+   notes / `build-deploy-gotchas`). Confirm you're on the **current build/output**, not a stale cache or old draft.
+3. **Exercise it like the consumer** — drive the real flow end to end: for software, a user's steps through UI +
+   backend; for data, re-run on real input and validate the output; for research, re-check each claim against its
+   source; for a creative artifact, experience the delivered form and fact-check it.
+4. **Capture evidence** — the profile's evidence: a screenshot/recording, the real response/state change, the
+   validation output, the citation ledger, or the artifact walkthrough + fact-check log. Ideally beside the reference.
+5. **Compare to intent** — does what you observed match step 1 and the reference? Note any delta.
 
 ## Report honestly
 - If it matches: present the **evidence**, and frame it as **"verified — your confirmation needed,"** not "done." The

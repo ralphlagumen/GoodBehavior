@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """GoodBehavior done-gate — a Stop hook that pushes back on self-declared "done".
 
-When the last assistant message makes an explicit completion claim *without* any sign of evidence,
-verification, or a hedge, it blocks the stop once and feeds back a short self-check. It is a heuristic
-nudge, not a lie detector: conservative claim-matching to limit false positives, and a single fire per
-turn (the stop_hook_active guard prevents loops).
+When the last assistant message makes an explicit completion claim without support, it blocks the
+stop once and feeds back a short self-check. It is a heuristic nudge, not a lie detector: conservative
+claim-matching to limit false positives, and a single fire per turn (the stop_hook_active guard
+prevents loops).
+
+Two layers:
+  LEXICAL    — what the message says. An honest hedge ("not done yet", "unverified") always lets the
+               stop through. Verification vocabulary ("verified", "I ran", "tests pass") is only a
+               *claim* of proof.
+  BEHAVIORAL — what the turn actually did. Verification vocabulary is honored only if something was
+               actually run/observed AFTER the last file change this turn (a command, a fetch, a
+               browser drive). "Edited files, ran nothing, said 'verified'" blocks: the final state
+               of the work was never observed, so the proof-claim is hollow.
 
 False-positive controls, in the order they short-circuit:
   (3) Activity gate  — only arm when THIS turn actually touched code/build (Edit/Write/Bash/...).
@@ -12,30 +21,62 @@ False-positive controls, in the order they short-circuit:
   (1) Meta escape    — talking ABOUT the gate/framework ("done-gate", "the hook") isn't a claim.
   (2) Assertive only — the completion word must head a short declarative clause, not just appear
                        somewhere in a long paragraph.
-  (0) Evidence/hedge — verification or an honest hedge in the message lets the stop through.
+  (0a) Hedge         — an honest downgrade in the message always lets the stop through.
+  (0b) Proof+observed — verification vocabulary + an observation after the last change lets it through.
+       Doc-only turns (every mutation touched .md/.txt/...) are exempt from the behavioral check:
+       there is often nothing to "run" for prose, so proof vocabulary suffices there.
 
 Wire as a Stop hook in .claude/settings.json. Requires only python3.
 """
 import sys, json, re
 
-# Tools whose use means the turn did real build work (lowercased).
+# Tools whose use means the turn did real build work (lowercased) — arms the gate.
 BUILD_TOOLS = {"edit", "write", "multiedit", "notebookedit", "applypatch", "bash"}
+
+# Tools that MUTATE files (for the behavioral check: what was the last change?).
+MUTATION_TOOLS = {"edit", "write", "multiedit", "notebookedit", "applypatch"}
+
+# Tools whose use counts as OBSERVING real behavior (running/fetching/driving something).
+# Sub-agent results (task/agent) are relayed claims, not firsthand observation — excluded on purpose.
+OBSERVE_TOOLS = {"bash", "webfetch"}
+OBSERVE_NAME_HINTS = ("browser", "puppeteer", "playwright", "chrome")
+
+# File extensions where "run it" usually doesn't apply — prose/docs. Doc-only turns skip the
+# behavioral check (lexical proof suffices).
+DOC_EXTENSIONS = (".md", ".markdown", ".txt", ".rst", ".adoc")
 
 # Explicit completion claims (kept narrow on purpose).
 CLAIM = re.compile(
     r"(✅|\bit'?s (now )?(done|complete|working)\b|\b(all )?(done|complete|completed|finished|shipped)\b"
     r"|\bworks now\b|\bfully (working|functional)\b|\bgood to go\b|\ball set\b)")
 
-# Signs of evidence / verification / honest hedging → let it through.
-EVIDENCE = re.compile(
-    r"(verif|screenshot|i ran|ran the|test(s)? pass|passing|confirm|evidence|rendered|observed"
-    r"|not (yet|done)|isn't done|partial|in progress|pending|blocked|deferred|backlog|to verify"
-    r"|please (check|review|confirm)|you (can )?(check|confirm)|left to do|remaining)")
+# (0a) Honest hedge / downgrade — always let the stop through; honesty must never be punished.
+HEDGE = re.compile(
+    r"(not (yet|done)|isn't done|unverified|partial|in progress|pending|blocked|deferred|backlog"
+    r"|to verify|still to|left to do|remaining|please (check|review|confirm)|you (can )?(check|confirm))")
+
+# (0b) Verification vocabulary — a *claim* of proof; honored only when backed by behavior.
+PROOF = re.compile(
+    r"(verif|screenshot|i ran|ran the|test(s)? pass|passing|confirm|evidence|rendered|observed)")
 
 # (1) Meta-discussion about the gate/framework itself — not a real completion claim.
 META = re.compile(
     r"(done-gate|good ?behavior|the (gate|hook)|this hook|stop hook|the regex"
     r"|false (positive|trigger))")
+
+MSG_NO_EVIDENCE = (
+    "GoodBehavior done-gate — you claimed completion. Before ending, self-check:\n"
+    "  1) Did you exercise the REAL thing the way its consumer would (per the project's profile) — not just a test/your description?\n"
+    "  2) Can you SHOW the evidence (result vs. reference; the flow firing / validation output / source-backed claim)?\n"
+    "  3) Is it user-confirmed? If not, say \"not done yet\" / state what's left — don't self-declare done.\n"
+    "Then either present the evidence, soften the claim, or record a learning and continue.\n")
+
+MSG_HOLLOW_PROOF = (
+    "GoodBehavior done-gate — you claim verification, but this turn ran/observed NOTHING after its last\n"
+    "file change: the final state of the work was never exercised. Either actually run/observe the real\n"
+    "thing now (per the project's profile) and show the result, or downgrade the claim to \"unverified /\n"
+    "not done yet\" and say what's left. A proof-word without an observation is the exact failure this\n"
+    "method exists to stop.\n")
 
 
 def main():
@@ -56,8 +97,10 @@ def main():
         sys.exit(0)
     t = text.lower()
 
+    tools = turn_tool_uses(entries)
+
     # (3) Activity gate: a turn that didn't build anything can't have "finished" anything.
-    if not built_this_turn(entries):
+    if not any(name in BUILD_TOOLS for name, _ in tools):
         sys.exit(0)
 
     # (1) Meta escape: discussing the gate/framework uses words like "done" incidentally.
@@ -68,16 +111,18 @@ def main():
     if not assertive_claim(text):
         sys.exit(0)
 
-    # (0) Evidence / verification / honest hedge present → fine to stop.
-    if EVIDENCE.search(t):
+    # (0a) An honest hedge always passes — never punish the downgrade.
+    if HEDGE.search(t):
         sys.exit(0)
 
-    sys.stderr.write(
-        "GoodBehavior done-gate — you claimed completion. Before ending, self-check:\n"
-        "  1) Did you exercise the REAL behavior (UI + backend), not just a test/your description?\n"
-        "  2) Can you SHOW the evidence (rendered result vs. reference; the flow firing)?\n"
-        "  3) Is it user-confirmed? If not, say \"not done yet\" / state what's left — don't self-declare done.\n"
-        "Then either present the evidence, soften the claim, or record a learning and continue.\n")
+    # (0b) Verification vocabulary passes only when the behavior backs it.
+    if PROOF.search(t):
+        if doc_only_mutations(tools) or observed_after_last_mutation(tools):
+            sys.exit(0)
+        sys.stderr.write(MSG_HOLLOW_PROOF)
+        sys.exit(2)
+
+    sys.stderr.write(MSG_NO_EVIDENCE)
     sys.exit(2)  # blocks the stop; stderr is returned to the model
 
 
@@ -92,6 +137,39 @@ def assertive_claim(text):
         if CLAIM.search(s.lower()):
             return True
     return False
+
+
+def is_observe_tool(name):
+    return name in OBSERVE_TOOLS or any(h in name for h in OBSERVE_NAME_HINTS)
+
+
+def observed_after_last_mutation(tools):
+    """Was anything run/fetched/driven AFTER the last file mutation this turn?
+
+    A turn with no file mutations armed the gate via bash alone — it executed something, which is
+    itself an observation, so it passes."""
+    last_mutation = -1
+    for i, (name, _) in enumerate(tools):
+        if name in MUTATION_TOOLS:
+            last_mutation = i
+    if last_mutation == -1:
+        return True
+    return any(is_observe_tool(name) for name, _ in tools[last_mutation + 1:])
+
+
+def doc_only_mutations(tools):
+    """True if every file mutation this turn touched only prose/doc files (and at least one did)."""
+    paths = []
+    for name, tool_input in tools:
+        if name not in MUTATION_TOOLS:
+            continue
+        p = ""
+        if isinstance(tool_input, dict):
+            p = tool_input.get("file_path") or tool_input.get("path") or tool_input.get("notebook_path") or ""
+        paths.append(str(p).lower())
+    if not paths:
+        return False
+    return all(p.endswith(DOC_EXTENSIONS) for p in paths)
 
 
 def entry_role(e):
@@ -112,22 +190,22 @@ def is_human_turn(e):
     return False
 
 
-def built_this_turn(entries):
-    """Did the assistant use a build tool since the last human message (this turn)?"""
+def turn_tool_uses(entries):
+    """All (tool_name, tool_input) the assistant used since the last human message, in order."""
     last_human = -1
     for i, e in enumerate(entries):
         if is_human_turn(e):
             last_human = i
+    out = []
     for e in entries[last_human + 1:]:
         if entry_role(e) != "assistant":
             continue
         content = e.get("message", e).get("content", "")
         if isinstance(content, list):
             for b in content:
-                if (isinstance(b, dict) and b.get("type") == "tool_use"
-                        and (b.get("name") or "").lower() in BUILD_TOOLS):
-                    return True
-    return False
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    out.append(((b.get("name") or "").lower(), b.get("input") or {}))
+    return out
 
 
 def last_assistant_text(entries):

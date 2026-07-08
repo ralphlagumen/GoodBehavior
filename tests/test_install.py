@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""install.py round-trip test — installs the REAL bundle into a temp target and checks the guarantees:
+only the planned profiles land (never all four), the manifest records true sha256s, settings.json merges
+without duplication, existing files are never clobbered, and a re-run is a clean no-op."""
+import hashlib, json, os, subprocess, sys, tempfile
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+INSTALL = os.path.join(ROOT, "scripts", "install.py")
+
+
+def sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def run_install(plan_path):
+    r = subprocess.run([sys.executable, INSTALL, "--plan", plan_path], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise AssertionError(f"install.py failed: {r.stderr}")
+    return json.loads(r.stdout)
+
+
+def main():
+    failures = []
+
+    def check(label, cond, detail=""):
+        print(f"  {'PASS' if cond else 'FAIL'}  {label}")
+        if not cond:
+            failures.append(f"{label} {detail}")
+
+    with tempfile.TemporaryDirectory() as target:
+        # a fake existing project file that must never be clobbered
+        os.makedirs(os.path.join(target, ".claude", "skills", "verify-goodbehavior"))
+        sentinel = os.path.join(target, ".claude", "skills", "verify-goodbehavior", "SKILL.md")
+        with open(sentinel, "w") as f:
+            f.write("LOCAL ADAPTATION — do not clobber\n")
+        # a pre-existing settings.json with the user's own hook that must survive the merge
+        with open(os.path.join(target, ".claude", "settings.json"), "w") as f:
+            json.dump({"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}, f)
+
+        plan = {"source": ROOT, "target": target,
+                "skills": ["verify-goodbehavior", "learn-goodbehavior", "update-goodbehavior"],
+                "profiles": ["analysis", "development"],
+                "hook": True,
+                "templates": {"docs/plans/ROADMAP.md": "templates/ROADMAP.md"}}
+        plan_path = os.path.join(target, "plan.json")
+        with open(plan_path, "w") as f:
+            json.dump(plan, f)
+
+        report = run_install(plan_path)
+
+        check("planned skills copied",
+              os.path.isfile(os.path.join(target, ".claude/skills/learn-goodbehavior/SKILL.md")))
+        check("planned profiles copied",
+              os.path.isfile(os.path.join(target, ".claude/goodbehavior/profiles/analysis.md"))
+              and os.path.isfile(os.path.join(target, ".claude/goodbehavior/profiles/development.md")))
+        check("UNplanned profiles absent (minimal footprint)",
+              not os.path.exists(os.path.join(target, ".claude/goodbehavior/profiles/creative.md"))
+              and not os.path.exists(os.path.join(target, ".claude/goodbehavior/profiles/research.md")))
+        check("template landed", os.path.isfile(os.path.join(target, "docs/plans/ROADMAP.md")))
+        check("hook landed executable",
+              os.access(os.path.join(target, ".claude/hooks/done-gate.py"), os.X_OK))
+        with open(sentinel) as f:
+            check("existing file never clobbered", "LOCAL ADAPTATION" in f.read())
+        check("clobber-skip reported",
+              any("verify-goodbehavior" in s for s in report["skipped"]))
+
+        mpath = os.path.join(target, ".claude/goodbehavior/manifest.json")
+        with open(mpath) as f:
+            manifest = json.load(f)
+        check("manifest has sourceCommit", bool(manifest.get("sourceCommit")))
+        hashes_ok = all(sha256(os.path.join(target, k)) == v["sha256"]
+                        for k, v in manifest["files"].items())
+        check("manifest sha256s match files as installed", hashes_ok)
+        check("manifest tracks the installed profiles",
+              ".claude/goodbehavior/profiles/analysis.md" in manifest["files"])
+
+        with open(os.path.join(target, ".claude", "settings.json")) as f:
+            settings = json.load(f)
+        check("user's own hook preserved", "PostToolUse" in settings["hooks"])
+        stops = settings["hooks"].get("Stop", [])
+        wired = sum(1 for e in stops for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
+        check("Stop hook wired exactly once", wired == 1)
+
+        # idempotency: re-run must create nothing new and not double-wire
+        report2 = run_install(plan_path)
+        check("re-run creates nothing", report2["created"] == [])
+        with open(os.path.join(target, ".claude", "settings.json")) as f:
+            stops2 = json.load(f)["hooks"]["Stop"]
+        wired2 = sum(1 for e in stops2 for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
+        check("re-run does not double-wire the hook", wired2 == 1)
+
+    print(f"test_install: {'FAILED: ' + '; '.join(failures) if failures else 'all passed'}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

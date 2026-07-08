@@ -1,15 +1,17 @@
 ---
 name: gate-build-goodbehavior
-description: Execute one roadmap phase under the gated loop — build each item, verify it live (real app + real flow), record learnings, and prove the phase with concrete evidence before starting the next. Use to work through a roadmap without drifting or self-declaring done.
+description: Execute one roadmap phase under the gated loop — build each item, verify it live (exercise the real thing per the project's profile), record learnings, and prove the phase with concrete evidence before starting the next. Use to work through a roadmap without drifting or self-declaring done.
 ---
 
 Work the **current (NOW) phase** of `docs/plans/ROADMAP.md`, one item at a time, to the real definition of done.
 
 ## Per item
 1. **Build** the smallest change that actually closes the gap (reuse before hand-rolling).
-2. **Deploy/run** it the project's real way (note the build/deploy traps — see the project's `build-deploy-gotchas`).
-3. **Verify live** — run `/verify-goodbehavior`: exercise the real behavior through the real UI *and* backend, like a
-   user, and capture evidence (rendered result vs. reference; the flow firing). A passing test alone is **not** verify.
+2. **Produce/run** it the project's real way (note the build/deploy traps — see the project's `build-deploy-gotchas`).
+3. **Verify live** — run `/verify-goodbehavior`: exercise the real thing the way its consumer would, per the project's
+   **profile** (software driven like a user through UI + backend; a dataset validated on real input; claims re-checked
+   against sources; a delivered artifact walked + fact-checked), and capture that profile's evidence. A passing test
+   alone is **not** verify.
 4. **Record learnings** — any non-obvious trap, correction, or build/deploy fact → `/learn-goodbehavior`.
 5. **Status** — mark the item done **only with evidence**; otherwise "partial/blocked" + log the blocker to the backlog.
 

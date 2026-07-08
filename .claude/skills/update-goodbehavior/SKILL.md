@@ -20,24 +20,25 @@ a symlink) precisely so a project can diverge; this skill is how divergence and 
 5. If the source working tree has uncommitted changes, note it: base/theirs come from commits, so uncommitted source
    edits won't be included. Suggest committing the source first for a complete update.
 
-## Reconcile each tracked file
-For every entry in `manifest.files`, plus any file present in `NEW` under the bundle's tracked paths but not yet in the
-manifest (an upstream **addition**):
+## Reconcile — run the script; keep the judgment
+The merge mechanics are deterministic and live in the source repo — run them, don't re-improvise them:
+```sh
+python3 <source>/scripts/update.py --target <project>     # add --dry-run first to preview
+```
+Per tracked file it does exactly: **theirs** = `NEW:<from>`, **base** = `<sourceCommit>:<from>`, **ours** = the local
+file; sha256-match → fast-forward (**updated**); otherwise `git merge-file` 3-way → **merged** or **conflict** (markers
+written, manifest sha left stale so a post-resolution re-run reconciles); upstream-removed files are **kept** locally
+and reported; locally-missing tracked files are **restored**. It refreshes the manifest (sha256s, `sourceCommit=NEW`,
+`updatedAt`) and prints a JSON report; exit 2 means conflicts need the human. It never touches `settings.json`.
 
-1. **theirs** = `git -C <source> show <NEW>:<from>`. If the path no longer exists in `NEW` → upstream **removed** it; ask
-   before deleting locally (default: keep + report).
-2. **base** = `git -C <source> show <sourceCommit>:<from>`. If it didn't exist at base (new upstream file): if the target
-   file is absent locally, copy theirs in (**added**); if it exists locally with no base, you can't 3-way it — if local
-   == theirs it's **unchanged**, else write theirs beside it as `<file>.upstream` and flag (**needs manual merge**).
-3. **ours** = the current target file `<project>/<key>`.
-4. **Fast path** — if `sha256(ours)` equals the manifest's recorded `sha256` (untouched since install): overwrite with
-   theirs → **updated**.
-5. **3-way merge** otherwise: write base/ours/theirs to temp files and run
-   ```sh
-   git merge-file -p -L "local" -L "base" -L "upstream" <ours_tmp> <base_tmp> <theirs_tmp> > merged
-   ```
-   Exit 0 (clean) → write `merged` to the target → **merged**. Non-zero (conflicts) → the output still contains the file
-   with `<<<<<<<`/`=======`/`>>>>>>>` markers; write it to the target, mark **conflict**, and list the file for the user.
+Your judgment on top of the report:
+- **Conflicts** — walk the user through each marked file; don't resolve silently.
+- **Upstream additions** (files in `NEW` under the bundle paths but absent from the manifest — e.g. a new skill or
+  profile): the script doesn't auto-add; decide with the user, then copy + add a manifest entry (or re-run
+  `install.py` with just the additions in the plan).
+- **Upstream removals** — the script kept them; deleting is the user's call.
+- **Script missing** (an old source): fall back to performing the same steps by hand with `git show` + `git merge-file`,
+  preserving the exact statuses above.
 
 **`settings.json` is special — never overwrite it.** It's project-owned and may carry the user's own hooks. Only update
 `done-gate.py` itself. If the upstream `Stop`-hook wiring format changed, surface that as a note for the user to apply by

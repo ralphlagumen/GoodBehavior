@@ -1,12 +1,13 @@
 ---
 name: uatplan-goodbehavior
-description: Build and maintain a living manual user-acceptance test plan — a map of every feature set, how a human drives each one on the REAL app, the expected result, and a pass/fail checklist to close it out. Complements automated tests and feeds /verify-goodbehavior. Use to make verification coverage durable and auditable, not ad hoc.
+description: Build and maintain a living manual user-acceptance test plan — a map of every feature set, how a human exercises each one on the REAL thing (per the project's profile), the expected result, and a pass/fail checklist to close it out. Complements automated tests and feeds /verify-goodbehavior. Use to make verification coverage durable and auditable, not ad hoc.
 ---
 
 Produce and keep current a **human-followable UAT plan** — the durable counterpart to automated tests and to the one-shot
 `/verify-goodbehavior` drive. Where verify proves *one* change live, the UAT plan is the *standing map* of what to test
-across the whole product and whether each case currently passes. Output: `docs/qa/UAT-PLAN.md`, kept in sync with the
-feature set as it grows (start from `templates/UAT-PLAN.md`).
+across the whole product and whether each case currently passes. Output: `docs/qa/UAT-PLAN.md` (start from
+`templates/UAT-PLAN.md`) — a **default, not a prescription**: if the project already keeps a manual test catalog
+(whatever it's named), maintain THAT instead of creating a parallel one. Kept in sync with the feature set as it grows.
 
 ## Organize by feature set (cross-referenced to journeys/personas)
 Enumerate the **real, as-built feature set** from the code/screens — not from memory or the design doc alone — grouped
@@ -16,9 +17,11 @@ matrix** (role × page/action: who can do what, and what the blocked case looks 
 
 ## Per case
 A stable **case ID** (e.g. `TC-<area><n>`), and for each:
-1. **Steps** — the exact user actions, end to end, on the real app (navigate, fill, submit).
-2. **Expected** — the observable result to compare against: UI state *and* the backend effect (row written, count moved,
-   state advanced). UI-only expectations miss half the bugs.
+1. **Steps** — the exact consumer actions, end to end, on the real thing per the profile (a dev app: navigate/fill/submit;
+   a dataset: run + inspect the output; findings: trace a claim to its source; a deck: walk it as delivered).
+2. **Expected** — the observable result to compare against. For software, UI state *and* the backend effect (row written,
+   count moved, state advanced) — UI-only expectations miss half the bugs; for other profiles, the profile's evidence
+   (validated output, source-backed claim, the artifact as the audience sees it).
 3. **Result** — `[ ] Pass [ ] Fail` + notes, filled when the case is actually driven.
 
 Flag **known/expected gaps** explicitly (blocked-on-X, by-design-absent) so a fail there isn't misread as a regression.

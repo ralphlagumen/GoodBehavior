@@ -14,7 +14,7 @@ crosses the line and what never does:
 
 | Lands in your project (yours now) | Stays in GoodBehavior (never copied) |
 |---|---|
-| `.claude/skills/*-goodbehavior/` — the skills | This `TUTORIAL.md`, the `README.md` |
+| `.claude/skills/*-goodbehavior/` — the working skills (adopt itself stays behind: it's a run-once installer) | This `TUTORIAL.md`, the `README.md`, `scripts/`, `tests/` |
 | `.claude/hooks/done-gate.py` + its `settings.json` wiring | GoodBehavior's own `TODO.md` (its dev backlog) |
 | The **principles** merged into *your* `CLAUDE.md` (or linked from your existing doc) | GoodBehavior's self-dev `docs/` (gitignored anyway) |
 | Plan/memory **scaffolding** from `templates/` — which become *your* `ROADMAP.md`, `MEMORY.md`, etc. | The GoodBehavior git history / source repo |
@@ -49,8 +49,15 @@ installs copies of the skills there.
 /adopt-goodbehavior /path/to/your-project
 ```
 
-Adopt runs four phases and **changes nothing until you confirm**: it *resolves* source + target, *analyzes* your
-project, *proposes* a tailored plan **with options**, and only then *installs*.
+Adopt runs five phases and **changes nothing until you confirm**: it *resolves* source + target, *understands your
+intent and resolves a profile*, *analyzes* your project, *proposes* a tailored plan **with options**, and only then
+*installs*.
+
+**It's not dev-only — and it asks before assuming.** Adopt first asks *what your project is* (what "done" looks like,
+who consumes the output, how you check it's right) and resolves a **profile** — development, analysis, research, or
+creative — that defines what "the real thing / verify / evidence" mean for you. Profiles are composable (a data pipeline
+is *built* like development but *verified* like analysis), and if none fits, adopt elicits those three slots from you
+directly. It will never tell you "GoodBehavior isn't meant for this project."
 
 **Existing project** — the common case. Adopt reads your stack, your workflow, and your existing context docs
 (`CLAUDE.md`, `HANDOFF.md`, `README`, `docs/`, any "read this first") and proposes how to integrate: append principles to
@@ -60,8 +67,9 @@ your CLAUDE.md or link them from your handoff doc; map planning onto your existi
 then adopt. With little to integrate, it scaffolds fresh: a CLAUDE.md with the principles, and `ROADMAP.md` /
 `PRODUCTION-BACKLOG.md` / `MEMORY.md` seeds you'll fill in.
 
-**The one thing to get right when it asks: the dev approach.** Adopt makes you confirm three *separate* things — don't
-let them collapse into one:
+**The one thing to get right when it asks (development slot): the dev approach.** When your profile includes a
+development slot, adopt makes you confirm three *separate* things — don't let them collapse into one (for a pure
+analysis/research/creative project this is skipped, and getting the **profile slots** right is the thing that matters):
 - **(a) local dev loop** — how you build/run/test on a machine;
 - **(b) deploy trigger** — how a change actually ships (a manual command? push-to-branch auto-deploy? which branch?);
 - **(c) verify target** — what "verify live" runs *against* (a deployed URL vs localhost).
@@ -107,7 +115,8 @@ done and how it'll be verified — never "spec green."
 ```
 
 Builds a **living manual user-test map** in `docs/qa/UAT-PLAN.md`: every feature set, the exact steps a human follows on
-the **real app**, the expected result (UI *and* backend effect), and a `[ ] Pass / [ ] Fail` checkbox to close each one.
+the **real thing** (per your profile — below shows the development case: the real app, UI *and* backend effect), the
+expected result, and a `[ ] Pass / [ ] Fail` checkbox to close each one.
 Organized by feature area (and by role, with a permutation matrix, where roles exist). This is the durable counterpart to
 automated tests — it catches what unit tests can't — and it's what the build step verifies against. Keep it current as
 features ship.
@@ -124,8 +133,9 @@ Works the **NOW** phase of the roadmap, **one item at a time**, to the real defi
 
 1. **Build** the smallest change that actually closes the gap (reuse before hand-rolling).
 2. **Deploy/run** it your project's real way.
-3. **Verify live** (`/verify-goodbehavior`) — drive the actual flow through the real UI *and* backend like a user, and
-   capture evidence. Mark the matching UAT case `[ ] Pass → ✔`. **A green test alone is not verification.**
+3. **Verify live** (`/verify-goodbehavior`) — exercise the real thing the way its consumer would, per your profile (for a
+   dev project: drive the flow through the real UI *and* backend like a user), and capture evidence. Mark the matching
+   UAT case `[ ] Pass → ✔`. **A green test alone is not verification.**
 4. **Record learnings** (`/learn-goodbehavior`) — any non-obvious trap/correction/build-deploy fact, so it isn't
    relearned next session.
 5. **Status** — mark the item done **only with evidence** (`✔`); otherwise "partial/blocked" (`⚠`) and log the blocker.

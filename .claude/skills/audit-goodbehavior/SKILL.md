@@ -4,7 +4,8 @@ description: Produce an honest, reference-cross-checked gap register — the con
 ---
 
 Catalog the gaps between the current build and the reference, concretely and honestly. The output is a gap register
-under `docs/audit/`, which `/roadmap-goodbehavior` later rolls into a plan.
+under `docs/audit/` (a **default, not a prescription** — if the project keeps findings elsewhere per its recorded
+conventions, write there), which `/roadmap-goodbehavior` later rolls into a plan.
 
 ## Non-negotiables
 - **Grounded in the real thing.** Every claim cites the actual file/screen/endpoint you just looked at — not memory.
@@ -19,22 +20,26 @@ under `docs/audit/`, which `/roadmap-goodbehavior` later rolls into a plan.
 
 ## Adversarial, multi-lens
 A single read only finds what it was looking for. Pass each area through **independent lenses** and surface where they
-*contradict*, not just what each turns up. At minimum: **security**, **coverage vs the intended journeys/spec**, and
-**completeness/wiring** (is it actually reachable end to end, or a dead surface?); add **flow/UX** and **internal
-coherence** for user-facing areas. Run the lenses as separate passes — or parallel sub-agents, each blind to the others —
+*contradict*, not just what each turns up. Pick lenses that fit the project's **profile** — the development set below is
+one instance. At minimum: **coverage vs the intended reference/spec** and **completeness/wiring** (is it actually
+reachable/usable end to end, or a dead surface?); for software add **security** and **flow/UX**; for analysis add
+**data correctness/lineage**; for research add **source provenance**; for creative add **factual integrity & internal
+coherence**. Run the lenses as separate passes — or parallel sub-agents, each blind to the others —
 then reconcile. A contradiction between two lenses (one says "done," another "unreachable") is itself a P0/P1 finding.
 
 ## Per-batch template (one file per batch, e.g. `docs/audit/01-<area>.md`)
 1. **Reference** — what the target shows/does for this area (with the source: screenshot, spec section, URL).
 2. **Ours today** — what we render/do now (cite the real code/screen).
 3. **Reuse check** — existing framework/library/components that fit but we hand-rolled or skipped.
-4. **Flow** — the click/call path; where it breaks or is missing.
-5. **Backend/data/security** — what backs it; scoping/access; data quality.
+4. **Flow** — the path a consumer takes through it (per the profile: click/call path; data run-to-output; claim→source
+   trail; the narrative/reading order); where it breaks or is missing.
+5. **What backs it** — per the profile: backend/scoping/access & data quality (software); input data + validation
+   (analysis); primary sources (research); the underlying figures/claims (creative).
 6. **Gaps** — the concrete deltas, each with P0/P1/P2 **and a `✔`/`⚠` verification tag** (confirmed firsthand vs still
    to confirm).
 
-Keep an index (`docs/audit/00-index.md`) with batch status and the enumerated real surface (the actual list of
-screens/endpoints/components), so coverage is auditable.
+Keep an index (`docs/audit/00-index.md`) with batch status and the enumerated real surface — the actual units for the
+profile (screens/endpoints/components; datasets/queries; sources/claims; sections/slides) — so coverage is auditable.
 
 ## Finish
 Roll the per-batch gaps up into `docs/plans/ROADMAP.md` via `/roadmap-goodbehavior`. The audit *documents* gaps — it does not build

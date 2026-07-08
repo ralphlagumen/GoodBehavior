@@ -1,11 +1,12 @@
 # User-acceptance test plan (manual UAT)
 
-A human-followable map of every feature set, how to drive it on the **real app**, the expected result, and a pass/fail
-checklist to close it out. The durable counterpart to automated tests and to a one-shot `/verify-goodbehavior` drive —
-maintained via `/uatplan-goodbehavior`. Built from the **as-built** surface (cite real screens/endpoints), kept in sync
-as features ship.
+A human-followable map of every feature set, how to exercise it on the **real thing** (per the project's profile — a
+running app, a dataset on real input, source-backed findings, or a delivered artifact), the expected result, and a
+pass/fail checklist to close it out. The durable counterpart to automated tests and to a one-shot `/verify-goodbehavior`
+drive — maintained via `/uatplan-goodbehavior`. Built from the **as-built** surface (cite real screens/endpoints/outputs),
+kept in sync as work ships.
 
-- **App / target:** <the deployed URL, or how a human runs it>
+- **Real thing / target:** <the deployed URL & how a human runs it; or the dataset+input; or the sources; or the delivered artifact>
 - **For each case:** follow the steps, compare to **Expected**, mark `[ ] Pass [ ] Fail`, add notes.
 - **A case passes only with firsthand live evidence** (`✔`), never a relayed/assumed result (`⚠`).
 

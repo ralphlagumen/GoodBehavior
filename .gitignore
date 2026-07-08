@@ -9,3 +9,7 @@
 #   - tracked source-only (README, TODO.md)         — generic by rule
 #   - self-dev scratch (docs/)                       — local only, may name projects
 docs/
+
+# python bytecode
+__pycache__/
+*.pyc

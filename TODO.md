@@ -20,6 +20,15 @@ flow upstream and back out to others.
 
 ## Promoted into the loop (log)
 
+- **2026-07-08 — generalize beyond dev + shrink the trust surface** (from three non-dev adoption attempts — a
+  presentation, a research project, data processing — where adopt balked with "not meant for this"). (1) **Profiles**:
+  the discipline is invariant; only *the-real-thing / verify / evidence* change by project type (truth source). Four
+  composable cores (development · analysis · research · creative) + custom fallback; adopt now **elicits intent before
+  surveying files** and must never decline a project. (2) **Behavioral done-gate**: verification vocabulary is honored
+  only if something was actually run/observed after the last file change that turn — proof-words alone no longer pass.
+  (3) **Deterministic mechanics**: install/update mechanics moved to `scripts/`; skills keep the judgment. (4)
+  **Self-test**: `tests/run_all.py` — the bundle held to its own standard (hook behavior, install round-trip, update
+  merge paths, drift lint).
 - **2026-06-28 — four promotions distilled from an adopter survey** (a real project running the bundle; identity stripped,
   generic form only). (1) **Standing-proceed** — an earned escalation of trust: once the user has seen the gates hold,
   the loop may run a plan unattended, pausing only for a genuine design decision / real failure / irreversible step; it
@@ -63,9 +72,23 @@ promotion log above):
 
 ## Carried-over open items (install/update thread, done 2026-06-23 — these remain)
 
-- [ ] **Initial commit of the source repo.** `/update-goodbehavior` needs a real merge base; until the GoodBehavior repo
-      is committed, `sourceCommit` is `null` and update can't 3-way-merge. (Don't commit without the user's go-ahead.)
-- [ ] **Exercise the round-trip.** Prove `/adopt` → make a local tweak → `/update` actually merges (untouched files
-      fast-forward, adapted files merge, conflicts mark) against a second commit. Currently unproven.
-- [ ] **Trial on a real existing project** (e.g. an adopt run somewhere with its own stack/conventions) to surface gaps by
-      use, not inspection.
+- [x] **Initial commit of the source repo.** Done — the repo has been committed since 2026-06 (this item had gone
+      stale; superseding it explicitly per the method's own rule).
+- [x] **Exercise the round-trip.** Proven hermetically by `tests/test_update.py` (fast-forward / clean merge /
+      conflict-with-markers / upstream-removal, against a real second commit, via `scripts/update.py`). A live
+      cross-project round-trip on a real adoptee is still worth one run — folded into the trial item below.
+- [x] **Live update round-trip on a real adoptee** — done 2026-07-08 against a real June install (base `f87ca80` →
+      `bf9e9d3`, across the profile-layer + scripts rewrite): all 8 tracked files reconciled (7 fast-forwards, 1
+      unchanged, zero conflicts — the adoptee had no local adaptations, so the merge/conflict paths remain covered by
+      `tests/test_update.py`), manifest advanced, upstream additions (uatplan skill + development profile) added via
+      `install.py` with judgment (their existing QA catalog kept — no template imposed), `project-profile` memory
+      written in the adoptee's own memory format.
+- [x] **Adopt trial on a real NON-DEV project** — done 2026-07-08 on a real workshop/presentation project (identity
+      stripped). The flow held: intent elicited BEFORE any file survey; the user's three answers resolved cleanly to
+      the **creative** profile (no composition, no fallback needed); the survey corroborated (deck toolchain + a video
+      render pipeline + an unrelated parked payload correctly excluded); install ran through `scripts/install.py`
+      (7 skills, ONLY the creative profile, hook wired, zero warnings); judgment steps tailored the principles, seeded
+      a real render/export gotcha from the project's own docs, and adapted the memory index — a live example of a
+      locally-adapted tracked file for a future update to 3-way-merge. Mid-adoption, an upward-infection audit was
+      requested and run: identity grep clean; two de-prescription fixes promoted (generic deploy example;
+      defaults-not-prescriptions notes) + a machine-local-path lint guard.
