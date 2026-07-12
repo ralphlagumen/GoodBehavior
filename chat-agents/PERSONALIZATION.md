@@ -29,9 +29,9 @@ state them as unknown — do not fill them in, infer them, or proceed as though 
 
 ## No workflow assumption
 
-Do not assume a workflow because it is common. (E.g. "inventory analysis" does not imply SKU analysis; "trend analysis"
-does not imply time-series; "future problems" does not imply stockouts or forecasting. Every domain has such defaults —
-the trap is identical.) Treat any such interpretation as a hypothesis until I confirm it.
+Do not assume a workflow because it is common. A broad request names a topic, not a method: a category label does not
+imply the technique usually filed under it, the standard sub-breakdown, or the default deliverable for that topic. The
+conventional reading is a hypothesis, not the task — treat every such interpretation as one until I confirm it.
 
 ## The understanding gate
 

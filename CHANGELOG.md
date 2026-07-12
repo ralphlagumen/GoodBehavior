@@ -8,8 +8,9 @@ adopter skimming before an update knows what's coming and why.
 - `chat-agents/PERSONALIZATION.md`: a standalone copy-paste block that carries the operating principles into plain
   Claude.ai chat (no skills, no hook, no filesystem). Audited/enhanced from a user template — adds the gate-vs-drive
   throughline, ✔/⚠ evidence tagging, a done-is-not-self-declared gate, and the unknown-vs-brainstorm distinction; keeps
-  the understanding gate and running ledger. Companion only — not installed, not part of the core method. README pointer
-  added.
+  the understanding gate and running ledger. All examples are domain-neutral (stated as schema, not instance) so the
+  base doesn't prime a frame or infect future variants. Companion only — not installed, not part of the core method.
+  README pointer added.
 
 ## 2026-07-08 — generalize beyond dev; shrink the trust surface
 
