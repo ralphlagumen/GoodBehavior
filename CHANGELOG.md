@@ -3,6 +3,17 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-07-13 — chat-agents: attach-file + inline-prompt deployment
+
+Some assistants (Copilot observed) **ignore custom instructions**, so standing instructions alone aren't enough. The
+`chat-agents/` folder now supports the robust belt-and-suspenders pattern and is single-sourced:
+- `chat-agents/goodbehavior.md`: **the** method (attach it, or paste it as instructions) — one source of truth.
+- `chat-agents/PROMPT-TEMPLATE.md`: a blank, domain-neutral per-task scaffold that re-states the gate + ✔/⚠ evidence
+  rules *inside the task prompt*, where a forgetful agent can't drop them.
+- `chat-agents/EXAMPLE.md`: the template filled for one task — domain nouns isolated here so the base stays neutral.
+- `chat-agents/README.md`: documents both deployment modes; replaces `PERSONALIZATION.md` (removed — its block became
+  `goodbehavior.md`, its usage notes became the README). Top-level README pointer updated.
+
 ## 2026-07-12 — chat-only companion
 
 - `chat-agents/PERSONALIZATION.md`: a standalone copy-paste block that carries the operating principles into plain

@@ -78,13 +78,15 @@ A persona + skills can encode the rules, but the engine that made this work was 
 writing down every lesson. The hook adds teeth, but it's a heuristic nudge, not a lie detector. Keep
 **user-confirmation as the done-gate** — the method is human-in-the-loop by design, not an autopilot for honesty.
 
-## Chat-only, no Claude Code?
+## Chat or a non-agentic assistant?
 
-The bundle above is agentic — skills, a hook, a filesystem to verify against. If you just want the same posture in plain
-Claude.ai chat, [`chat-agents/PERSONALIZATION.md`](chat-agents/PERSONALIZATION.md) is a single copy-paste block that carries
-the discipline as prompt alone (understanding gate, ✔/⚠ evidence tagging, no self-declared "done," a running ledger),
-invokable mid-chat with "follow the GoodBehavior approach." It's a companion, not part of the core method — nothing
-installs it.
+The bundle above is agentic — skills, a hook, a filesystem to verify against. To get the same posture in plain Claude.ai
+chat (or another assistant like Copilot), [`chat-agents/`](chat-agents/) carries the discipline as prompt alone
+(understanding gate, ✔/⚠ evidence tagging, no self-declared "done," a running ledger). Two ways to deploy it:
+[`goodbehavior.md`](chat-agents/goodbehavior.md) as standing instructions (invoke with "follow the GoodBehavior
+approach"); or — for assistants that **ignore** custom instructions — attach that file **and** drive each task with
+[`PROMPT-TEMPLATE.md`](chat-agents/PROMPT-TEMPLATE.md), which re-states the rules inline where they can't be dropped.
+Companion only — nothing installs it.
 
 ## License
 

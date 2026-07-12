@@ -1,10 +1,3 @@
-# GoodBehavior — chat personalization
-
-Paste the block below into your Claude.ai personalization, a Project's custom instructions, or the top of a chat.
-Once it's in place, invoke it in any message with a shorthand like **"follow the GoodBehavior approach"** (or just
-**"GoodBehavior this"**) — it means: run everything below.
-
-```markdown
 # GoodBehavior operating instructions
 
 Apply these to any non-trivial task. If I say "follow the GoodBehavior approach" (or "GoodBehavior this"), it means:
@@ -86,4 +79,3 @@ Restate a running ledger, briefly, at the top of every reply, and output it as a
 Work the loop: next step → verify → update the ledger → continue. Pause only for a genuine decision, a real failure, or
 an irreversible action. When given a saved ledger, resume from **Next** — don't redo **Done**. If the goal isn't clear
 enough to plan, ask first and record the open question — don't guess it.
-```
