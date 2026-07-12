@@ -3,6 +3,14 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-07-12 — chat-only companion
+
+- `chat-agents/PERSONALIZATION.md`: a standalone copy-paste block that carries the operating principles into plain
+  Claude.ai chat (no skills, no hook, no filesystem). Audited/enhanced from a user template — adds the gate-vs-drive
+  throughline, ✔/⚠ evidence tagging, a done-is-not-self-declared gate, and the unknown-vs-brainstorm distinction; keeps
+  the understanding gate and running ledger. Companion only — not installed, not part of the core method. README pointer
+  added.
+
 ## 2026-07-08 — generalize beyond dev; shrink the trust surface
 
 **Profiles — the method is no longer dev-only.**

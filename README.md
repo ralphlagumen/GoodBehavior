@@ -78,6 +78,14 @@ A persona + skills can encode the rules, but the engine that made this work was 
 writing down every lesson. The hook adds teeth, but it's a heuristic nudge, not a lie detector. Keep
 **user-confirmation as the done-gate** — the method is human-in-the-loop by design, not an autopilot for honesty.
 
+## Chat-only, no Claude Code?
+
+The bundle above is agentic — skills, a hook, a filesystem to verify against. If you just want the same posture in plain
+Claude.ai chat, [`chat-agents/PERSONALIZATION.md`](chat-agents/PERSONALIZATION.md) is a single copy-paste block that carries
+the discipline as prompt alone (understanding gate, ✔/⚠ evidence tagging, no self-declared "done," a running ledger),
+invokable mid-chat with "follow the GoodBehavior approach." It's a companion, not part of the core method — nothing
+installs it.
+
 ## License
 
 [MIT](LICENSE) © 2026 Ronald Villaver.
