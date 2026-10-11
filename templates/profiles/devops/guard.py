@@ -80,7 +80,7 @@ SECRET_PARTS = (
     "/.config/gh/hosts", "/.terraform.d/credentials", "/.secret/", "/.secrets/",
 )
 SECRET_BASENAMES = {".secret", ".secrets", ".netrc", ".pgpass", ".git-credentials", ".npmrc", ".pypirc",
-                    ".envrc", "credentials.json", "service-account.json", "environ"}
+                    ".envrc", "credentials.json", "service-account.json", "environ", "kubeconfig"}
 SECRET_PATTERNS = re.compile(r"^(\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?|.*\.tfstate(\.backup)?|"
                              r".*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|.*\.secret)$")
 
@@ -177,7 +177,7 @@ DANGEROUS_ENV = re.compile(
     r"^(PATH|HOME|SHELL|ENV|BASH_ENV|ZDOTDIR|IFS|PS4|PROMPT_COMMAND|CDPATH|FPATH|EDITOR|VISUAL|PAGER|TMPDIR|"
     r"LD_\w+|DYLD_\w+|PYTHON(PATH|STARTUP|HOME|USERBASE)|NODE_OPTIONS|NODE_PATH|PERL5\w*|RUBY\w*|GIT_\w+|"
     r"SSH_\w+|TF_CLI_\w+|TF_PLUGIN_\w+|TF_CLI_CONFIG_FILE|MAKE\w*|LESS\w*|CURL_\w+|WGETRC|DOCKER_HOST|"
-    r"DOCKER_CONFIG|KUBECONFIG|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE|CLOUDSDK_CONFIG|AZURE_CONFIG_DIR)$")
+    r"DOCKER_CONFIG|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE|CLOUDSDK_CONFIG|AZURE_CONFIG_DIR)$")
 SECRET_ENV = re.compile(r"(SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API_?KEY|ACCESS_KEY|SESSION_KEY)",
                         re.I)
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\+?=)(.*)$", re.S)
@@ -355,6 +355,8 @@ def check_kubectl(args):
     if not words:
         return None
     verb = words[0]
+    if any(re.fullmatch(r"--dry-run(=(server|client))?", a) for a in args):
+        return None  # validated and admitted by the server (or client), stored nowhere
     out = flag_value(args, "-o", "--output") or next((a[2:] for a in args if a.startswith("-o") and len(a) > 2), "")
     if verb == "get" and any(w in {"secret", "secrets"} or w.startswith("secret/") for w in words[1:]) \
             and re.match(r"(yaml|json|jsonpath|go-template|custom-columns)", out or ""):
@@ -388,6 +390,9 @@ def check_helm(args):
         return None
     if words[0] == "get":
         return ask("`helm get`", "can print release values and manifests that hold secrets")
+    if words[0] in {"install", "upgrade", "uninstall", "rollback"} and any(
+            re.fullmatch(r"--dry-run(=(server|client|true))?", a) for a in args):
+        return None
     if words[0] in HELM_READ:
         return None
     return ask("`helm %s`" % words[0], "changes something in the cluster")
@@ -983,7 +988,7 @@ def check_make(args, cwd, depth):
 
 
 SHELL_BINARIES = {"bash", "sh", "zsh", "dash", "ksh"}
-SECRET_TOOLS = {"vault": {"read", "get", "kv", "token"}, "op": {"read", "get", "item", "inject", "run"},
+SECRET_TOOLS = {"vault": {"read", "get", "kv", "token"}, "bao": {"read", "get", "kv", "token"}, "op": {"read", "get", "item", "inject", "run"},
                 "sops": set(), "gh": {"token"}, "pass": {"show"}, "bw": {"get", "export"},
                 "doppler": {"secrets", "run"}, "infisical": {"secrets", "export", "run"}, "chamber": {"read", "export",
                                                                                                     "exec"},
@@ -1371,7 +1376,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             return check_script(real, cwd, depth, interpreter="sh")
         return ask("`%s %s`" % (name, target), "runs a file the guard can't find")
     in_place = name in {"sed", "gsed", "perl"} and any(a.startswith(("-i", "--in-place")) or a == "-pi" for a in args)
-    reads_files = not in_place and name not in WRITERS and name not in {"cd", "mkdir", "stat", "ls", "test", "[", "[[", "git",
+    reads_files = not in_place and name not in WRITERS and name not in {"kubectl", "k", "oc", "helm", "k9s","cd", "mkdir", "stat", "ls", "test", "[", "[[", "git",
                                                          "basename", "dirname", "realpath", "readlink", "file",
                                                          "touch", "chmod", "source", "."}
     for a in args:
@@ -1401,8 +1406,17 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
 
     if name in SECRET_TOOLS:
         verbs = positional(args, {"-format", "--format", "-field", "--field", "--vault", "--account", "-o", "--output"})
-        if name == "sops" and bundled(args, {"-d", "--decrypt", "-i"} ) or name != "sops" and \
-                any(v in SECRET_TOOLS[name] for v in verbs[:3]):
+        if name in {"vault", "bao"} and (verbs[:1] in (["status"], ["version"]) or verbs[1:2] == ["list"]
+                                         and verbs[:1] in (["auth"], ["audit"], ["secrets"], ["policy"], ["kv"])):
+            return None  # status and listings show names, not secret values
+        reads = SECRET_TOOLS[name]
+        if verbs[:1] == ["kv"]:
+            hit = verbs[1:2] in (["get"], ["read"])
+        elif name in {"vault", "bao"}:
+            hit = bool(verbs[:1]) and verbs[0] in reads
+        else:
+            hit = any(v in reads for v in verbs[:2])
+        if (name == "sops" and bundled(args, {"-d", "--decrypt", "-i"})) or (name != "sops" and hit):
             return secret("`%s %s`" % (name, " ".join(verbs[:3])), "prints a secret")
         return ask("`%s %s`" % (name, " ".join(verbs[:2])), "is a secrets tool the guard can't vet")
     if name in {"aws", "aws2"}:

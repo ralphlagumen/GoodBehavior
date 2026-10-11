@@ -12,7 +12,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PROFILES = ("development", "analysis", "research", "creative", "devops")
 SLOTS = ("**the-real-thing:**", "**verify:**", "**evidence:**")
 # devops guides (templates/profiles/devops/<name>.md): every practice is a `**rule:**` paired with a `**probe:**`
-DEVOPS_GUIDES = ("baseline", "terraform", "shell", "aws", "azure", "gcp", "digitalocean", "onprem")
+DEVOPS_GUIDES = ("baseline", "terraform", "shell", "aws", "azure", "gcp", "digitalocean", "onprem", "kubernetes", "helm")
 
 # files that must stay artifact-agnostic (the invariant layer)
 INVARIANT_FILES = [

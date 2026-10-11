@@ -5,9 +5,8 @@ use-when: the project has shell scripts (deploy, backup, maintenance, glue); ins
 
 # Shell scripts: rules for writing and running them safely, each with its probe
 
-Based on Cycle.io, "Shell Scripting Best Practices"
-(https://cycle.io/learn/shell-scripting-best-practices), with additions and corrections marked **Note**. Probes
-marked "tested" were run with bash 5.3, dash and shellcheck 0.11 on macOS. Running a script that changes anything is a change: it needs the user's yes first, per `devops.md`.
+Probes marked "tested" were run with bash 5.3, dash and shellcheck 0.11 on macOS. Running a script that changes
+anything is a change: it needs the user's yes first, per `devops.md`.
 
 ## Before running a script
 
@@ -23,7 +22,7 @@ marked "tested" were run with bash 5.3, dash and shellcheck 0.11 on macOS. Runni
 ## Safety
 
 - **rule:** Start bash scripts with `set -euo pipefail` (POSIX `sh`: `set -eu`).
-  **probe:** `head -5 script.sh` shows it. **Note:** the article's `set -e` alone is not enough (tested): a failed
+  **probe:** `head -5 script.sh` shows it. **Note:** `set -e` alone is not enough (tested): a failed
   pipeline (`missing_cmd | sort`) kept going, and a typo in a variable name (`$tagret_dir/old`) silently became
   `/old`. With `rm -rf` in front, that deletes the wrong path. `set -euo pipefail` stopped both.
 - **rule:** Check results by hand where `set -e` doesn't apply: inside a function called from `if`, `&&` or `||`,
@@ -42,10 +41,10 @@ marked "tested" were run with bash 5.3, dash and shellcheck 0.11 on macOS. Runni
 - **rule:** Never delete with a wildcard outside your own temp folder. Use `mktemp -d` and remove it with a `trap`
   on exit. Guard any delete path built from a variable with `${var:?}` so an empty value stops the script.
   **probe:** `grep -n 'rm -' script.sh`: every target is a quoted variable that is checked, or the `mktemp` folder.
-  After a run, the temp folder is gone (tested). **Note:** the article's `cleanup() { rm -rf /tmp/*; }` deletes
+  After a run, the temp folder is gone (tested). **Note:** a cleanup like `cleanup() { rm -rf /tmp/*; }` deletes
   every other program's temp files. Don't copy it.
 - **rule:** Running the script twice is safe: the second run changes nothing it already changed.
-  **probe:** run the dry run again after an apply; it reports nothing left to do. **Note:** not in the article.
+  **probe:** run the dry run again after an apply; it reports nothing left to do.
 - **rule:** No `eval`, and no passwords, tokens or keys in the script. Read them from the environment or a secret
   manager. Don't trace (`set -x`) a section that handles secrets; it prints them.
   **probe:** `grep -n 'eval' script.sh` prints nothing. Run a secret scanner (e.g. `gitleaks detect`) over the repo.

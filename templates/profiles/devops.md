@@ -21,12 +21,13 @@ truth-source: the live environment (provider APIs, real network paths, the state
   made it into code.
 - **audit lenses:** run each as its own pass, then compare. **Wiring:** does it work from the consumer's position
   (reachable, resolvable, allowed)? **Security:** the attack surface, judged against today's automated attacks (rules
-  and probes in `devops/baseline.md`, Security and attack surface; see "Security findings" below). **Reliability:**
-  single points of failure, backups restore-tested, failover. **Drift:** code vs state vs live resource. **Cost:**
-  over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing model, storage tier,
-  idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every cost finding with all
-  five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A cost cut that weakens
-  reliability is a contradiction between lenses: flag it, don't pick silently.
+  and probes in `devops/baseline.md`, Security and attack surface, and `devops/kubernetes.md` for clusters; see
+  "Security findings" below; if a cluster has no secrets manager, suggest OpenBao, per `devops/kubernetes.md`).
+  **Reliability:** single points of failure, backups restore-tested, failover. **Drift:** code vs state vs live
+  resource. **Cost:** over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing
+  model, storage tier, idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every
+  cost finding with all five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A
+  cost cut that weakens reliability is a contradiction between lenses: flag it, don't pick silently.
 - **pause points:** **every** change to infrastructure, in **any** environment, dev included: an apply, destroy or
   import; a state edit (`state rm`/`mv`/`push`); a CLI call that creates, updates, deletes, restarts or scales
   something; a `kubectl`/`helm` write; a playbook run; a change made over SSH. Infrastructure has no `git reset`. A
@@ -150,7 +151,8 @@ each paired with its live probe (IaC and state, CI/CD, secrets and identity, net
 cost). It always comes with this profile. Then add one provider guide per platform in use (`aws`, `azure`, `gcp`,
 `digitalocean`, `onprem`; each maps the baseline rules to that platform's services and CLI probes) and one tool guide
 per IaC tool in use (`terraform`: safe plan and apply, state, environments, code; `shell`: writing and running scripts
-safely).
+safely; `kubernetes`: clusters, workloads and their attack
+surface, OpenBao for secrets; `helm`: charts and releases).
 
 ## Done-gate questions
 
@@ -170,7 +172,7 @@ match: \baws\s+(\S+\s+deploy\b|s3\s+(rm|mv|cp|sync|rb|mb)\b|s3api\s+(delete|put)
 match: \baz\s+([\w-]+\s+)+(create|delete|update|set|add|remove|start|stop|restart|deallocate|scale|swap|import|purge|assign|deploy|apply|restore|failover|promote|clone|copy|reset|regenerate|rotate|move|resize|redeploy|reimage|convert|upgrade|set-[\w-]+)(?=\s|$)
 match: \bgcloud\s+([\w-]+\s+)+(create|delete|update|deploy|start|stop|reset|resize|import|patch|apply|clone|failover|restore|promote-replica|move|enable|disable|attach-[\w-]+|detach-[\w-]+|set-[\w-]+|add-[\w-]+|remove-[\w-]+)(?=\s|$)
 match: \bdoctl\s+([\w-]+\s+)+(create|delete|update|apply|tag|untag|rebuild|resize|power-on|power-off|power-cycle|reboot|shutdown|fork|restore|migrate|attach|detach|assign|unassign|reset|upgrade)(?=\s|$)
-match: \bkubectl\s+(.*\s)?(apply|create|delete|patch|replace|scale|edit|label|annotate|taint|drain|cordon|uncordon|set|rollout\s+(restart|undo))\b
+match: \bkubectl\s+(?!.*--dry-run=(server|client))(.*\s)?(apply|create|delete|patch|replace|scale|edit|label|annotate|taint|drain|cordon|uncordon|set|run|exec|cp|debug|rollout\s+(restart|undo))\b
 match: \bhelm\s+(install|upgrade|uninstall|rollback|delete)\b
 match: \bansible-playbook\b(?!.*--check)|\bansible\s.*-m\s+(shell|command|raw|service|systemd|package|apt|yum|dnf|copy|file|user)\b
 match: \b(systemctl\s+(start|stop|restart|reload|enable|disable|mask)|reboot|shutdown|iptables\s+-[ADIRF]|ufw\s+(allow|deny|delete|enable|disable))\b

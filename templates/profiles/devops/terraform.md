@@ -5,10 +5,8 @@ use-when: the project uses Terraform or OpenTofu; install next to the baseline a
 
 # Terraform: rules for a safe apply, each with its probe
 
-Based on Paweł Piwosz, "10 Terraform best practices that actually matter"
-(https://medium.com/@pawel.piwosz/10-terraform-best-practices-that-actually-matter-55b73afb2923), with corrections
-marked **Note**. Every probe below was run against Terraform 1.15. Probes are read-only unless marked
-**(pause point)**: those need the user's yes first, per `devops.md`.
+Every probe below was run against Terraform 1.15. Probes are read-only unless marked **(pause point)**: those need the
+user's yes first, per `devops.md`.
 
 ## The apply itself
 
@@ -21,7 +19,7 @@ marked **Note**. Every probe below was run against Terraform 1.15. Probes are re
   **probe:** `terraform plan -detailed-exitcode` exits `0` (no changes). Exit `2` means drift, a console change, or
   a value that changes on every run.
 - **rule:** Stateful resources (databases, disks, buckets, keys) are protected from accidental deletion.
-  **probe:** grep each one for `lifecycle { prevent_destroy = true }`. **Note:** not in the article; it makes a plan
+  **probe:** grep each one for `lifecycle { prevent_destroy = true }`. It makes a plan
   that would delete the resource fail instead of running.
 - **rule:** In CI, plan and apply are separate steps with a human approval between them, and the apply uses the
   plan artifact from the plan step.
@@ -37,7 +35,7 @@ marked **Note**. Every probe below was run against Terraform 1.15. Probes are re
   **probe:** while one run holds the lock, a second `terraform plan -lock-timeout=0s` fails with
   `Error acquiring the state lock`. Grep CI and scripts for `-lock=false`: none.
   **Note:** on S3, use `use_lockfile = true` in the backend. Terraform 1.15 marks `dynamodb_table` as deprecated
-  ("Use parameter use_lockfile instead"), so the article's DynamoDB lock table is no longer needed.
+  ("Use parameter use_lockfile instead"), so a separate DynamoDB lock table is no longer needed.
 - **rule:** Split state by domain (network, security, compute, storage, databases), so a change to one can't touch
   another and plans stay fast.
   **probe:** `terraform state list | wc -l` per project stays small; a compute change's plan shows no network

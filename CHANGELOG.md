@@ -3,6 +3,31 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-12 — devops: Kubernetes and Helm guides, OpenBao, cluster attack surface
+
+- `devops/kubernetes.md`: access (keep the project's kubeconfig at `files/kubeconfig`, gitignored, mode 600, and point
+  every command at it), cluster and upgrades, namespaces, workloads, security and attack surface, delivery,
+  observability, cost. The attack-surface rules cover Pod Security Admission (enforce rejects Pods; controllers are
+  only warned about, with a `warn` label), securityContext, RBAC escalation rights, token automount, host access,
+  the cloud metadata endpoint, exposed services, the API server and kubelet, audit logging, fail-closed webhooks,
+  runtime detection, benchmark and image scanning, mTLS, and DoS limits.
+- Secrets: when a cluster has no secrets manager, the guide and the audit's security lens **suggest OpenBao** (HA
+  Raft, auto-unseal, Kubernetes auth, audit device, External Secrets or the agent injector).
+- `devops/helm.md`: chart layout and labels, `values.schema.json`, safe defaults that pass `restricted`, no secrets
+  in values, pinned dependencies, version bumps, rendered-output scanning; releases previewed with a diff,
+  `--atomic --wait --timeout --history-max`, no stuck releases, values in files, GitOps, Helm's release Secrets;
+  verified and signed charts.
+- Guard: `kubectl`/`helm` dry runs (`--dry-run=server|client`) run; `files/kubeconfig` (and any `kubeconfig`) is a
+  secret file: usable by kubectl/helm, never printed; `KUBECONFIG=` no longer asks (picking the cluster is the
+  user's call, like `AWS_PROFILE`); `bao` reads are denied like `vault`, `bao status` and listings run.
+- Verified on a local Kubernetes 1.35 cluster reached only through an isolated kubeconfig: every read probe, the
+  PSA dry-run rejection, `kubectl diff` and server dry run (nothing stored), the Helm probes with Helm 3.18 (lint,
+  schema, PSA warn, install with `--atomic`, history, release Secrets), the attack-surface probes (anonymous API
+  401, roles, automount, host access, services, webhooks, flow schemas, `trivy k8s`, the metadata-endpoint pod),
+  and OpenBao 2.7.1 from its chart (pod label, `bao status`, `bao auth list`, `bao audit list`). Live `claude -p`
+  with the guard: `KUBECONFIG=files/kubeconfig kubectl get nodes` ran, `Read files/kubeconfig` denied, `kubectl
+  create namespace` stopped (the namespace was not created).
+
 ## 2026-10-12 — devops guard.py: default-deny parsing, looser default (ask), secrets denied
 
 The red-team audit found the text-matching guard bypassable (29 confirmed routes) and failing open. This replaces it
@@ -134,22 +159,20 @@ or local), softer outcome: anything else **asks** instead of being denied, so in
 
 ## 2026-10-11 — devops: shell script guide
 
-- `templates/profiles/devops/shell.md`: rules for writing and running shell scripts, from Cycle.io's "Shell Scripting
-  Best Practices", each with a probe: read a script before running it and ask if it changes anything; strict mode;
+- `templates/profiles/devops/shell.md`: rules for writing and running shell scripts, each with a probe: read a script before running it and ask if it changes anything; strict mode;
   dry run by default with `--apply`; input checks; quoting and `--`; `mktemp -d` + `trap` cleanup; no `eval` or
   secrets; descriptive names; `printf`; POSIX vs bash shebang; `bash -n`/`shellcheck`. Ends with a tested template.
-- Corrections to the article, tested with bash 5.3: `set -e` alone let a failed pipeline continue and turned a
+- Corrections to common advice, tested with bash 5.3: `set -e` alone let a failed pipeline continue and turned a
   variable typo into `/old`; `set -euo pipefail` stops both, but failures inside functions called from `if` are
-  still ignored. The article's `rm -rf /tmp/*` cleanup deletes other programs' files; use `mktemp -d` + `trap`.
+  still ignored. A `rm -rf /tmp/*` cleanup deletes other programs' files; use `mktemp -d` + `trap`.
 - The guard hook can't see inside a script, so the guide makes reading it first a rule.
 
 ## 2026-10-11 — devops: Terraform guide
 
-- `templates/profiles/devops/terraform.md`: rules for a safe Terraform/OpenTofu apply, from Paweł Piwosz's "10
-  Terraform best practices that actually matter", each with a probe run against Terraform 1.15: saved plan only, list
+- `templates/profiles/devops/terraform.md`: rules for a safe Terraform/OpenTofu apply, each with a probe run against Terraform 1.15: saved plan only, list
   every delete/replace from `show -json` before asking, `plan -detailed-exitcode` after apply, remote locked state,
   split state, one directory per environment, validated variables, pinned versions, `templatefile()`, module READMEs.
-- Corrections to the article: S3 locking uses `use_lockfile = true` (Terraform 1.15 deprecates `dynamodb_table`);
+- Corrections to common advice: S3 locking uses `use_lockfile = true` (Terraform 1.15 deprecates `dynamodb_table`);
   `most_recent` image lookups can force a replace; added `prevent_destroy` on stateful resources and a
   user-approved `force-unlock`.
 - `devops.md` and `adopt-goodbehavior` offer tool guides next to provider guides. Lint checks the new guide.
