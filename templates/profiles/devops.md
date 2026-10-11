@@ -86,8 +86,8 @@ Assume the user is not an infrastructure expert. Many people now build with AI a
 
 **Guides** (in `devops/` next to this file; install only the ones that match): `baseline` has the cross-cloud rules,
 each paired with its live probe (IaC and state, CI/CD, secrets and identity, networking, observability, backup/DR,
-cost). It always comes with this profile. Then add one provider guide per platform in use (each maps the baseline rules
-to that platform's services and CLI probes) and one tool guide per IaC tool in use (`terraform`: safe plan and apply,
+cost). It always comes with this profile. Then add one provider guide per platform in use (`aws`, `azure`, `gcp`,
+`digitalocean`, `onprem`; each maps the baseline rules to that platform's services and CLI probes) and one tool guide per IaC tool in use (`terraform`: safe plan and apply,
 state, environments, code; `shell`: writing and running scripts safely).
 
 ## Done-gate questions
@@ -100,15 +100,18 @@ other turn is an **investigation**. Add a line when you use a tool that isn't co
 ### gate: change
 match: \b(terraform|tofu|terragrunt)\s+(.*\s)?(apply|destroy|import|taint|untaint|force-unlock|state\s+(rm|mv|push|replace-provider)|workspace\s+delete)\b
 match: \b(pulumi\s+(up|destroy|refresh|import|state\s+delete)|cdk\s+(deploy|destroy))\b
-match: \baws\s+\S+\s+(create|delete|update|put|modify|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|restore|replace|authorize|revoke|register|deregister|enable|disable|set|tag|untag)-
+match: \baws\s+\S+\s+(create|delete|update|put|modify|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|restore|replace|authorize|revoke|register|deregister|enable|disable|set|tag|untag|rotate|failover|promote|copy|reset|cancel|purge|import|batch)-
 match: \baws\s+(\S+\s+deploy\b|s3\s+(rm|mv|cp|sync|rb|mb)\b|s3api\s+(delete|put)-)
-match: \baz\s+([\w-]+\s+)+(create|delete|update|set|add|remove|start|stop|restart|deallocate|scale|swap|import|purge|assign|deploy|apply)\b
-match: \bgcloud\s+([\w-]+\s+)+(create|delete|update|deploy|start|stop|reset|resize|import|patch|apply|set-[\w-]+|add-[\w-]+|remove-[\w-]+)\b
-match: \bdoctl\s+([\w-]+\s+)+(create|delete|update|apply|tag|untag|rebuild|resize|power-on|power-off|power-cycle|reboot|shutdown)\b
+match: \baz\s+([\w-]+\s+)+(create|delete|update|set|add|remove|start|stop|restart|deallocate|scale|swap|import|purge|assign|deploy|apply|restore|failover|promote|clone|copy|reset|regenerate|rotate|move|resize|redeploy|reimage|convert|upgrade|set-[\w-]+)(?=\s|$)
+match: \bgcloud\s+([\w-]+\s+)+(create|delete|update|deploy|start|stop|reset|resize|import|patch|apply|clone|failover|restore|promote-replica|move|enable|disable|attach-[\w-]+|detach-[\w-]+|set-[\w-]+|add-[\w-]+|remove-[\w-]+)(?=\s|$)
+match: \bdoctl\s+([\w-]+\s+)+(create|delete|update|apply|tag|untag|rebuild|resize|power-on|power-off|power-cycle|reboot|shutdown|fork|restore|migrate|attach|detach|assign|unassign|reset|upgrade)(?=\s|$)
 match: \bkubectl\s+(.*\s)?(apply|create|delete|patch|replace|scale|edit|label|annotate|taint|drain|cordon|uncordon|set|rollout\s+(restart|undo))\b
 match: \bhelm\s+(install|upgrade|uninstall|rollback|delete)\b
 match: \bansible-playbook\b(?!.*--check)|\bansible\s.*-m\s+(shell|command|raw|service|systemd|package|apt|yum|dnf|copy|file|user)\b
 match: \b(systemctl\s+(start|stop|restart|reload|enable|disable|mask)|reboot|shutdown|iptables\s+-[ADIRF]|ufw\s+(allow|deny|delete|enable|disable))\b
+match: \b(qm|pct)\s+(start|stop|shutdown|reboot|destroy|rollback|snapshot|delsnapshot|migrate|set|resize|create|restore)\b|\bha-manager\s+(set|add|remove|migrate|relocate)\b
+match: \bgovc\s+(vm\.(power|destroy|create|change|clone|migrate)|snapshot\.(create|remove|revert))\b|\bvirsh\s+(start|shutdown|reboot|destroy|undefine|setvcpus|setmem|snapshot-(create|delete|revert))\b
+match: \brestic\s+(.*\s)?(forget|prune|restore|unlock)\b|\bborg\s+(.*\s)?(delete|prune|compact|extract)\b
 - Before running it, did you show the user what you found, the fix, the risks and how to undo it, in plain words,
   and get a clear yes for these exact commands?
 - Which environment and account/subscription/project did this run against? Did you check the workspace, backend and

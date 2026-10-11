@@ -4,7 +4,7 @@
 Each case builds a JSONL transcript (human turn -> assistant tool uses -> final assistant text),
 pipes the Stop-hook stdin JSON, and asserts the exit code (0 = stop allowed, 2 = blocked) and,
 when blocked, which message fired (bare-claim vs hollow-proof)."""
-import json, os, shutil, subprocess, sys, tempfile
+import glob, json, os, re, shutil, subprocess, sys, tempfile
 
 HOOK = os.path.join(os.path.dirname(__file__), "..", ".claude", "hooks", "done-gate.py")
 DEVOPS = os.path.join(os.path.dirname(__file__), "..", "templates", "profiles", "devops.md")
@@ -117,6 +117,9 @@ GUARD_ASK = [
     "kubectl apply -f x.yaml", "kubectl -n prod delete pod p", "kubectl rollout restart deploy/x",
     "kubectl scale deploy/x --replicas=0", "helm upgrade app chart", "ansible-playbook site.yml",
     "sudo systemctl restart nginx", "ssh host sudo reboot",
+    "qm stop 101", "qm rollback 101 snap1", "govc vm.power -off vm1", "virsh destroy vm1",
+    "restic forget --keep-daily 7 --prune", "restic restore latest --target /tmp/r", "borg prune -v repo",
+    "ha-manager migrate vm:101 node2",
 ]
 GUARD_PASS = [
     "terraform plan -out tfplan", "terraform show tfplan", "terraform state list", "terraform validate",
@@ -124,7 +127,26 @@ GUARD_PASS = [
     "az network nsg rule list -g rg --nsg-name n", "az account show", "gcloud compute instances list",
     "doctl compute droplet list", "kubectl get pods", "kubectl describe pod p", "kubectl logs p", "helm list",
     "ansible-playbook site.yml --check --diff", "dig +short x", "curl -sI https://x", "git status", "pytest -q",
+    "qm listsnapshot 101", "qm list", "govc snapshot.tree -vm vm1", "virsh list --all", "restic snapshots --latest 1",
+    "restic check", "borg list --last 1 repo", "ha-manager status",
 ]
+
+
+GUIDE_CLI = re.compile(r"(aws|az|gcloud|doctl|terraform|tofu|kubectl|helm|restic|borg|qm|govc|virsh) ")
+
+
+def guide_probe_commands():
+    """(read_only, changing) CLI commands from the devops guides' probes. A command written after a
+    '(pause point)' marker changes something and must ask; one before it is read-only and must not."""
+    read_only, changing = [], []
+    for g in sorted(glob.glob(os.path.join(os.path.dirname(__file__), "..", "templates", "profiles", "devops", "*.md"))):
+        for block in re.split(r"\n- \*\*rule:\*\*", open(g).read())[1:]:
+            probe = block.split("**probe:**", 1)[-1]
+            i = probe.find("pause point")
+            before, after = (probe, "") if i < 0 else (probe[:i], probe[i:])
+            read_only += [c for c in re.findall(r"`([^`]+)`", before) if GUIDE_CLI.match(c)]
+            changing += [c for c in re.findall(r"`([^`]+)`", after) if GUIDE_CLI.match(c)]
+    return read_only, changing
 
 
 def run_guard(command, project_dir):
@@ -152,6 +174,8 @@ def main():
             print(f"        expected exit={want_exit} frag={want_frag!r}; got exit={code} stderr={err[:200]!r}")
     empty_dir = tempfile.mkdtemp()
     guard_cases = ([(c, profile_dir, "ask") for c in GUARD_ASK] + [(c, profile_dir, "pass") for c in GUARD_PASS]
+                   + [(c, profile_dir, "ask") for c in guide_probe_commands()[1]]  # guides' pause points ask
+                   + [(c, profile_dir, "pass") for c in guide_probe_commands()[0]]  # guides' read-only probes pass
                    + [("terraform apply tfplan", empty_dir, "pass")])  # no profile match: lines -> no-op
     guard_bad = []
     for command, pdir, want in guard_cases:

@@ -3,6 +3,26 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops: provider guides (AWS, Azure, GCP, DigitalOcean, on-prem)
+
+- `templates/profiles/devops/{aws,azure,gcp,digitalocean,onprem}.md`: each maps every baseline area (IaC and state,
+  CI/CD, secrets and identity, networking, observability, backup/DR, cost) to that platform's services and CLI
+  probes. Each names the platform's own traps: Azure "stopped" VMs still billed until deallocated; DigitalOcean
+  databases with no trusted sources accept connections from anywhere, powered-off droplets are billed in full, and
+  there is no OIDC or audit-log API; GCP default compute service account; AWS Cost Explorer calls are billed.
+- Every CLI command was checked offline against the installed CLI (AWS CLI 2.36, Azure CLI 2.89, Google Cloud SDK
+  588, doctl 1.166) with no credentials and no network reach to the provider: command names, flags, required
+  arguments and (AWS, Azure) `--query` syntax. That caught 3 Azure commands that need `-g` and a GA-missing
+  `gcloud monitoring channels`. On-prem probes that run on macOS were run (SSH certificate window, TLS expiry,
+  `dig`, `nc`, Ansible check mode showing drift without changing anything); Linux-only ones (`ss`, `nft`,
+  `systemctl`, `journalctl`, `smartctl`) were reviewed but not run.
+- Guard: `match:` lines now cover on-prem changes (`qm`, `pct`, `govc`, `virsh`, `ha-manager`, `restic`/`borg`
+  forget/prune/restore) and more cloud verbs (rotate, restore, failover, clone, fork, `set-*`). Verbs match whole
+  words only, so `az sql failover-group list` no longer asks.
+- `test_hook.py`: every CLI command in the guides is checked against the guard: the 12 after a pause-point marker
+  must ask, the 200+ read-only probes must not (280 commands in all). `test_lint.py` checks all 8 guides pair every
+  rule with a probe.
+
 ## 2026-10-11 — devops: cost in every audit and proposal
 
 - `devops.md`: new **audit lenses** slot (wiring, security, reliability, drift, cost). The cost lens looks for
