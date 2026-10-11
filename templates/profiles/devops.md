@@ -84,6 +84,10 @@ default-deny guard with a softer default:
   printers, state dumps, `docker inspect` without `--format`), and anything it crashed on. With permissions bypassed,
   every ask becomes a deny.
 - Logs every ask and deny to `.claude/goodbehavior/guard.log` (we suggest adding it to `.gitignore`).
+- **Trusted commands:** list regexes, one per line, in `.claude/goodbehavior/guard-allow.txt` for commands this
+  project trusts (for example `^make test_` for local test targets). A match turns an ask into a run; it never lifts a
+  deny, so secrets stay protected. The file is under `.claude/`, so Claude can't add to it without asking, and
+  `/update-goodbehavior` never touches it.
 It is a speed bump, not a sandbox: the credential the session runs with is the real boundary.
 
 ## Running scripts and make targets

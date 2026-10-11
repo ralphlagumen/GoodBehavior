@@ -516,7 +516,7 @@ PROJECT_CASES = [
     ("vault kv get secret/x", "deny"), ("bao kv get secret/x", "deny"), ("bao read secret/data/x", "deny"),
     ("bao status", "allow"), ("bao auth list", "allow"), ("bao audit list", "allow"), ("bao secrets enable kv", "ask"), ("sops -d s.enc.yaml", "deny"), ("docker exec web env", "deny"),
     ("docker inspect web", "deny"), ("set -a; . ./.secret; set +a; make infra_plan", "allow"),
-    ("echo 'B=2' >> .env", "allow"), ("sed -i 's/^B=.*/B=3/' .env", "allow"), ("cp .env.example .env", "allow"),
+    ("echo 'B=2' >> .env", "allow"), ("cat ${HOME}/.env", "deny"), ("cat $HOME/.aws/credentials", "deny"), ("sed -i 's/^B=.*/B=3/' .env", "allow"), ("cp .env.example .env", "allow"),
     ("cat .env.example", "allow"), ("cat /proc/self/environ", "deny"),
     # self-protection
     ("rm -rf .claude/goodbehavior/profiles", "ask"), ("mv .claude .claude.bak", "ask"),
@@ -543,6 +543,9 @@ PROJECT_CASES = [
     ("export KUBECONFIG=$PWD/files/kubeconfig", "allow"), ("cat files/kubeconfig", "deny"),
     ("cat files/.kubeconfig/cluster-prod-kubeconfig.yaml", "deny"), ("cat files/.kubeconfig/prod.yaml", "deny"),
     ("kubectl --kubeconfig files/.kubeconfig/prod.yaml get pods", "allow"), ("cat my-kubeconfig.yaml", "deny"),
+    ("jq '.runs.steps[] | select(.name == \"Fetch kubeconfig\") | .if' action.yml", "allow"),
+    ("grep -q 'doctl kubernetes cluster kubeconfig save' workflow.yml", "allow"),
+    ("ARGS=(\"$EVENT\" -W wf.yml); echo \"${ARGS[@]}\"", "allow"), ("echo $((1 + 2))", "ask"),
     ("kubectl --kubeconfig files/kubeconfig config view --raw", "deny"), ("git check-ignore files/kubeconfig", "allow"),
     ("kubectl apply --dry-run=server -f cm.yaml", "allow"), ("kubectl run x --image=busybox --dry-run=server -n ns", "allow"),
     ("kubectl apply --dry-run=none -f cm.yaml", "ask"), ("kubectl diff -f cm.yaml", "allow"),
@@ -582,6 +585,15 @@ def main():
     for tool, inp, want in TOOL_CASES:
         inp = {k: v.replace("{P}", PROJECT).replace("~", HOME) for k, v in inp.items()}
         expect("%s %s" % (tool, inp), want, run({"tool_name": tool, "tool_input": inp}, PROJECT))
+    # project allow list: turns an ask into a run, never lifts a deny
+    allow_file = os.path.join(PROJECT, ".claude", "goodbehavior", "guard-allow.txt")
+    os.makedirs(os.path.dirname(allow_file), exist_ok=True)
+    with open(allow_file, "w") as f:
+        f.write("# trusted\n^make deploy$\n^cat \\.env$\n[invalid(\n")
+    expect("allow list: listed ask runs", "allow", bash("make deploy", PROJECT))
+    expect("allow list: unlisted ask still asks", "ask", bash("make release", PROJECT))
+    expect("allow list: never lifts a deny", "deny", bash("cat .env", PROJECT))
+    os.remove(allow_file)
     # bypass mode: ask becomes deny; allow stays allow
     expect("bypass: make infra_apply", "deny", bash("make infra_apply", PROJECT, mode="bypassPermissions"))
     expect("bypass: make infra_plan", "allow", bash("make infra_plan", PROJECT, mode="bypassPermissions"))
@@ -595,7 +607,7 @@ def main():
         entries = [json.loads(line) for line in f]
     expect("decision log has asks and denies", True, {"ask", "deny"} <= {e["decision"] for e in entries})
 
-    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 5
+    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 8
     for f_ in failures:
         print("  FAIL  " + f_)
     print("  %s  guard: %d/%d decisions as expected" % ("PASS" if not failures else "FAIL", total - len(failures), total))

@@ -46,6 +46,9 @@ and a guard that lets investigation run but stops changes and secret leaks.
   dumps, kubeconfigs: `files/kubeconfig`, anything in a `.kubeconfig/` folder or named `*kubeconfig*`).
 - Fails closed on a crash; turns every ask into a deny when permissions are bypassed (Claude Code was seen skipping
   a hook's ask for Edit in that mode); logs every ask and deny to `.claude/goodbehavior/guard.log`.
+- Trusted commands: regexes in a project's `.claude/goodbehavior/guard-allow.txt` turn an ask into a run (never a
+  deny into a run). Test files (`bats`, `node`) are read before running; inside them, `PATH` mocks and arithmetic
+  are tolerated.
 - Without `guard.py`, `done-gate.py` falls back to a simpler text-matching guard built from the profile's gate
   sections.
 

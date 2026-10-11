@@ -83,7 +83,7 @@ SECRET_BASENAMES = {".secret", ".secrets", ".netrc", ".pgpass", ".git-credential
                     ".envrc", "credentials.json", "service-account.json", "environ", "kubeconfig"}
 SECRET_PATTERNS = re.compile(r"^(\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?|.*\.tfstate(\.backup)?|"
                              r".*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|.*\.secret|"
-                             r".*kubeconfig.*)$")
+                             r"\.?kubeconfig|[\w.-]*kubeconfig[\w.-]*\.(ya?ml|json|conf))$")
 
 
 def project_dir(payload):
@@ -131,8 +131,9 @@ def is_protected(path, cwd):
 
 
 def is_secret(path, cwd):
-    if not path or path.startswith("-"):
-        return False
+    cleaned = re.sub(r"\$\{\w+\}", "$V", path or "")
+    if not path or path.startswith("-") or re.search(r"\s|[|(){}\[\]\"]", cleaned):
+        return False  # not a path: a filter, a message, an expression
     if any(ch in path for ch in "*?["):
         base = resolve(path, cwd)
         matches = glob.glob(base) if base else []
@@ -185,7 +186,7 @@ ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\+?=)(.*)$", re.S)
 
 
 def env_problem(name):
-    if DANGEROUS_ENV.match(name):
+    if DANGEROUS_ENV.match(name) and not TEST_MODE:
         return ask("`%s=…`" % name, "changes which program runs or how it behaves")
     return None
 
@@ -387,7 +388,7 @@ def check_helm(args):
                               "--values", "--version", "--set", "--repo"})
     if not words:
         return None
-    if words[0] == "repo" and words[1:2] in (["list"], ["ls"]):
+    if words[0] in {"repo", "plugin"} and words[1:2] in (["list"], ["ls"]):
         return None
     if words[0] == "get":
         return ask("`helm get`", "can print release values and manifests that hold secrets")
@@ -831,17 +832,27 @@ def read_text(path):
         return None
 
 
+MAKE_TEXT_FUNCS = {
+    "firstword": lambda a: (a.split() or [""])[0], "lastword": lambda a: (a.split() or [""])[-1],
+    "strip": lambda a: " ".join(a.split()), "dir": lambda a: " ".join(os.path.dirname(w) + "/" for w in a.split()),
+    "notdir": lambda a: " ".join(os.path.basename(w) for w in a.split()),
+}
+
+
 def make_expand(text, variables, depth=0):
     if depth > 10:
         return text
     out = re.sub(r"\$[({]([A-Za-z_][A-Za-z0-9_.-]*)[)}]", lambda m: variables.get(m.group(1), m.group(0)), text)
+    out = re.sub(r"\$\((%s) ([^()$]*)\)" % "|".join(MAKE_TEXT_FUNCS),
+                 lambda m: MAKE_TEXT_FUNCS[m.group(1)](m.group(2)), out)
     return out if out == text else make_expand(out, variables, depth + 1)
 
 
 def make_rules(directory, makefile, overrides):
     names = [makefile] if makefile else ["GNUmakefile", "makefile", "Makefile"]
     path = next((os.path.join(directory, n) for n in names if os.path.isfile(os.path.join(directory, n))), None)
-    variables, rules, problems, seen = {"MAKE": "make", "CURDIR": directory}, {}, [], set()
+    variables, rules, problems, seen = {"MAKE": "make", "CURDIR": directory,
+                                        "MAKEFILE_LIST": os.path.basename(path or "Makefile")}, {}, [], set()
     load_time = []  # shell commands make runs while reading the file (:= and != values)
     default = [None]
 
@@ -989,6 +1000,9 @@ def check_make(args, cwd, depth):
 
 
 SHELL_BINARIES = {"bash", "sh", "zsh", "dash", "ksh"}
+JS_RISKY = re.compile(r"child_process|\bexecSync\b|\bspawn(Sync)?\b|\bfetch\s*\(|\bhttps?\.request\b|"
+                      r"\bfs\.(write|append|unlink|rm|rename|copyFile)|\bnet\.|process\.env")
+BATS_SYNTAX = re.compile(r"""(?m)^\s*@test\s+("[^"]*"|'[^']*')\s*\{|\brun\s+(?=\S)|^\s*load\s+\S+""")
 SECRET_TOOLS = {"vault": {"read", "get", "kv", "token"}, "bao": {"read", "get", "kv", "token"}, "op": {"read", "get", "item", "inject", "run"},
                 "sops": set(), "gh": {"token"}, "pass": {"show"}, "bw": {"get", "export"},
                 "doppler": {"secrets", "run"}, "infisical": {"secrets", "export", "run"}, "chamber": {"read", "export",
@@ -1131,6 +1145,18 @@ def split_shell(text):
 
     while i < n:
         c = text[i]
+        if quote is None and c == "(" and text[i - 1:i] == "=" and re.match(r"[A-Za-z_]\w*\+?=$",
+                                                                               "".join(cur).split()[-1] if cur and "".join(cur).split() else ""):
+            end = find_close(i + 1, "(", ")")  # NAME=( ... ): an array assignment, not a subshell
+            cur.append(text[i:end + 1])
+            i = end + 1
+            continue
+        if quote != "'" and TEST_MODE and text.startswith("$((", i):
+            end = text.find("))", i)
+            if end != -1:
+                cur.append("0")  # arithmetic in a test file: tolerated, like PATH changes
+                i = end + 2
+                continue
         if quote != "'" and (text.startswith(("$((", "${(", "$["), i) or (quote is None and text.startswith("((", i))):
             raise ValueError("arithmetic or zsh expansion flags evaluate variable contents as code")
         if quote == "'":
@@ -1236,6 +1262,7 @@ READERS = {
     "wait", "jobs", ":", "pushd", "popd", "shift", "read", "exit", "return", "break", "continue", "getopts",
     "umask", "ulimit", "mktemp", "sha1sum", "trivy", "checkov", "tflint", "nproc", "less", "more", "sort", "date",
     "traceroute", "mtr", "whois", "ss", "nc", "openssl", "shellcheck", "gitleaks", "terraform-docs", "infracost",
+    "tfsec", "semgrep", "kubeconform", "kube-linter", "hadolint", "actionlint", "yamllint", "fzf",
     "lynis", "time", "tput", "locale", "hostname", "env", "printenv", "set", "export", "declare", "typeset",
     "local", "readonly", "unset", "setopt", "unsetopt", "shopt", "cd", "command", "awk", "gawk", "sed", "find",
     "xargs", "curl", "wget", "python", "python3", "tee", "ssh-keygen", "systemctl", "journalctl", "dmesg",
@@ -1288,6 +1315,12 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     docker_host = None
     while words and ASSIGNMENT.match(words[0]):
         name, _, value = ASSIGNMENT.match(words[0]).groups()
+        if value.startswith("("):  # NAME=( a b c ): an array assignment; its elements are data, not commands
+            k = 0
+            while k < len(words) and not words[k].endswith(")"):
+                k += 1
+            words = words[k + 1:]
+            continue
         if name == "DOCKER_HOST" and value.startswith("ssh://"):
             docker_host = value
         elif len(words) > 1 or DANGEROUS_ENV.match(name):
@@ -1337,13 +1370,15 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         binary, args = args[0], args[1:]
 
     name = binary.rsplit("/", 1)[-1]
-    if binary in FUNCS or (binary.endswith("()") and binary[:-2] in FUNCS) or binary == "function":
+    if binary in FUNCS or (binary.endswith("()") and binary[:-2] in FUNCS) or binary == "function" or (
+            TEST_MODE and re.match(r"(skip|assert_\w+|refute_\w+|bats_\w+|fail)$", binary)):
         return None  # a function defined in this script: its body is checked where it is defined
     if name == "__SUBST__" or "__SUBST__" in binary:
         return ask("a command named by substitution", "can't be checked")
     if "$" in binary:
         return ask("a command named by a variable (`%s`)" % binary, "can't be checked")
-    if name in {"[["} and set(args) & {"-eq", "-ne", "-lt", "-le", "-gt", "-ge"} and any("$" in a for a in args):
+    if name in {"[["} and set(args) & {"-eq", "-ne", "-lt", "-le", "-gt", "-ge"} and any(
+            "$" in re.sub(r"\$(#|\?|!|\$|\{#[A-Za-z_]\w*\})", "", a) for a in args):
         return ask("a `[[` numeric test on a variable", "evaluates the variable's contents as code")
     if name in {"eval", "alias", "unalias", "hash", "enable", "trap", "fc", "coproc", "zmodload", "autoload",
                 "emulate", "let", "builtin"}:
@@ -1474,6 +1509,34 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             if real and os.path.isfile(real) and depth < MAX_DEPTH:
                 return check_script(real, cwd, depth, interpreter=name)
         return ask("`%s`" % name, "runs a script or stdin the guard can't see")
+    if name == "node":
+        if not args or args[0] in {"--version", "-v"}:
+            return None
+        files = [a for a in args if not a.startswith("-")]
+        if "-e" in args or "-p" in args or "--eval" in args or not files:
+            return ask("`node` running inline code", "runs JavaScript the guard can't check")
+        for f in files:
+            for path in (glob.glob(os.path.join(cwd, f)) or [os.path.join(cwd, f)]):
+                text = read_text(path)
+                if text is None or JS_RISKY.search(text):
+                    return ask("`node %s`" % os.path.relpath(path, cwd), "runs JavaScript that can start programs, reach "
+                               "the network or write files")
+        return None
+    if name == "bats":
+        hit = None
+        for f in [a for a in args if not a.startswith("-")]:
+            for path in sorted(glob.glob(os.path.join(cwd, f)) + glob.glob(os.path.join(cwd, f, "*.bats"))):
+                if os.path.isfile(path):
+                    raw_text = read_text(path) or ""
+                    helpers = ""  # functions from `load <helper>` files, so calls to them are known
+                    for name_ in re.findall(r"(?m)^\s*load\s+['\"]?([\w./-]+)", raw_text):
+                        base = os.path.join(os.path.dirname(path), name_)
+                        helpers += (read_text(base if base.endswith(".bash") else base + ".bash") or "") + "\n"
+                    text = BATS_SYNTAX.sub(" ", helpers + raw_text)
+                    h = check_command(text, cwd, depth + 1, test_mode=True)
+                    if h:
+                        hit = worse(hit, (h[0] + " (in `%s`)" % os.path.relpath(path, cwd), h[1], h[2]))
+        return hit
     if name in {"python", "python3"}:
         if "-c" in args:
             k = args.index("-c")
@@ -1533,7 +1596,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         return None
     if name in {"awk", "gawk", "nawk"}:
         prog = next((a for a in args if not a.startswith("-")), "")
-        if re.search(r"system|getline|\|", prog) or re.search(r"print[f]?[^;{}]*>", prog):
+        if re.search(r"system|getline|(?<!\|)\|(?!\|)", prog) or re.search(r"print[f]?[^;{}<>=]*>(?!=)", prog):
             return ask("`awk` program", "can run commands or write files")
         return None
     if name == "find":
@@ -1570,7 +1633,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     return ask("`%s`" % name, "is not a command the guard knows to be read-only")
 
 
-MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\(\s*mktemp\b[^)]*\)")
+MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=[\"']?\$\(\s*mktemp\b[^)]*\)")
 STATUS_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\?")
 KNOWN = {}  # variables set to literals earlier in the command being checked; inherited by sh -c / xargs
 FUNCS = set()  # shell functions defined in the text being checked; their bodies are checked where defined
@@ -1583,9 +1646,15 @@ def substitute(text, known):
     return text
 
 
-def check_command(command, cwd, depth=0, raw=None):
+TEST_MODE = False  # inside a test file: tests mock tools by changing PATH, which is tolerated there
+
+
+def check_command(command, cwd, depth=0, raw=None, test_mode=None):
     """The worst decision over every part of a shell command line, or None when all of it is safe."""
-    global KNOWN, FUNCS
+    global KNOWN, FUNCS, TEST_MODE
+    outer_test = TEST_MODE
+    if test_mode is not None:
+        TEST_MODE = test_mode
     command = command.replace("\\\n", " ")  # line continuations
     raw = raw if raw is not None else command
     outer, known = KNOWN, dict(KNOWN)
@@ -1599,7 +1668,7 @@ def check_command(command, cwd, depth=0, raw=None):
         KNOWN = known
         return _check_command(command, cwd, depth, raw, known)
     finally:
-        KNOWN, FUNCS = outer, outer_funcs
+        KNOWN, FUNCS, TEST_MODE = outer, outer_funcs, outer_test
 
 
 def _check_command(command, cwd, depth, raw, known):
@@ -1684,10 +1753,27 @@ def classify(payload):
     if not hit:
         return None
     what, why, level = hit
+    if level == "ask" and any(p.search(command.strip()) for p in project_allow(payload)):
+        return None  # the user listed this command as trusted (.claude/goodbehavior/guard-allow.txt)
     if level == "deny":
         return "deny", "BLOCKED: %s %s. Use the value without printing it, or ask the user to look." % (what, why)
     return "ask", ("%s %s. Approve only if Claude has explained, in plain words, why it needs to run, what could "
                    "break and how to undo it." % (what, why))
+
+
+def project_allow(payload):
+    """Regexes (one per line, # comments) the user trusts in .claude/goodbehavior/guard-allow.txt. They can turn an
+    ask into a run; secrets stay denied. The file sits in .claude/, so Claude can't edit it without asking."""
+    path = os.path.join(project_dir(payload), ".claude", "goodbehavior", "guard-allow.txt")
+    out = []
+    for line in (read_text(path) or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            try:
+                out.append(re.compile(line))
+            except re.error:
+                pass
+    return out
 
 
 BYPASS_NOTE = (" Permissions are bypassed in this session, so this can't be approved here: explain it to the user, "
