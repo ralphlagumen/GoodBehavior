@@ -188,7 +188,8 @@ Write findings in the "Security findings" format from `devops.md` (risk, how lik
   monitoring, Defender for Containers, GKE threat detection), and its alerts reach a human.
   **probe:** `kubectl get daemonsets -A` shows the detection agent on every node, and a recent alert can be found.
 - **rule:** The cluster is scanned against a benchmark (CIS, NSA/CISA) and for vulnerable images, on a schedule.
-  **probe:** `trivy k8s --disable-node-collector --report summary` and `kubescape scan framework nsa`; findings have
+  **probe:** `trivy k8s --disable-node-collector --report summary`, `kubescape scan framework nsa`, or Prowler
+  (`prowler kubernetes --kubeconfig-file <kubeconfig> --context <context> --severity critical high`); findings have
   owners. Running `kube-bench` as a Job on the nodes is a **(pause point)**.
 - **rule:** Traffic between services is encrypted and authenticated where the data is sensitive (a service mesh in
   strict mTLS mode).

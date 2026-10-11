@@ -19,15 +19,23 @@ and a guard that lets investigation run but stops changes and secret leaks.
 - Secrets go in a gitignored `.secret` file (mode 600); `.env` and `.secret` are never read. Keeping `AWS_PROFILE`
   and similar in `.env` is suggested, not required.
 - Audit lenses: wiring, security (judged against automated attacks; each finding states risk, how likely, impact,
-  fix, evidence), reliability, drift, cost. A cluster with no secrets manager gets an OpenBao suggestion.
+  fix, evidence), reliability, drift, cost, code. A cluster with no secrets manager gets an OpenBao suggestion.
+- Audit coverage: every devops audit ends with security, cost and code checklist batches. A command builds one row
+  per guide rule; each row is pass, finding, not checked (with why) or n/a. Broad read-only scanners run too
+  (gitleaks over git history, trivy, checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape). Cost
+  reads the real bill and ends with a savings table. Each batch opens with a plain verdict with counts, and the final
+  report always covers security, cost and code.
 - Done-gate questions for changes (environment, every destroy/replace, saved plan, no-change re-plan, consent) and
   for investigations (observed vs inferred, live state, alternatives ruled out, propose don't apply).
 
 **Guides** (`templates/profiles/devops/`, installed only when they match: `"devops/<guide>"` in the install plan)
-- `baseline`: IaC and state, CI/CD, secrets and identity, networking, security and attack surface, observability,
+- `baseline`: IaC and state, CI/CD, code (secrets in history, misconfigurations, lint, safe pipelines, copy-paste,
+  dead code), secrets and identity, networking, security and attack surface, observability,
   backup/DR (restore-tested), cost.
 - Tools: `terraform`, `shell`, `kubernetes` (kubeconfig at gitignored `files/kubeconfig`, cluster attack surface,
   OpenBao), `helm`. Platforms: `aws`, `azure`, `gcp`, `digitalocean`, `onprem`.
+- `aws` also checks IMDSv2, default disk encryption and a whole-account Prowler scan; `kubernetes` adds Prowler as
+  a cluster scanner.
 - Corrections to common advice, each tested: S3 state locking uses `use_lockfile` (`dynamodb_table` is deprecated);
   `set -e` alone misses pipeline failures and unset variables; never clean up with `rm -rf /tmp/*`;
   `openssl s_client -tls1_1` needs `-cipher 'DEFAULT@SECLEVEL=0'` on OpenSSL 3+; Pod Security `enforce` rejects Pods

@@ -47,6 +47,43 @@ How to run probes:
   **probe:** **(pause point)** in non-prod, deploy the previous version through the pipeline and confirm the health
   check passes.
 
+## Code
+
+Audit the code itself, not only what it built: Terraform, pipelines, scripts, charts and Dockerfiles. Run every
+scanner on the whole repo (and the secret scanner on the whole git history), not only on the files you changed.
+These are file reads, safe to run without asking. A tool that isn't installed is a "not checked" row, never a pass.
+
+- **rule:** No secret is in the repo or its history. Deleting a file does not remove it from history: a key that was
+  ever committed must be revoked and replaced.
+  **probe:** `gitleaks git . --redact --no-banner` (gitleaks 8.19 or later; older versions use `gitleaks detect`).
+  `--redact` keeps the values out of the output. For each hit, say whether the file is still tracked
+  (`git ls-files --error-unmatch <file>`), and treat a hit in a state file, kubeconfig or `.tfvars` as real until shown
+  otherwise.
+- **rule:** Infrastructure code has no known misconfigurations: open security groups, unencrypted storage, public
+  buckets, privileged containers, missing logging.
+  **probe:** `trivy config --severity HIGH,CRITICAL .` and `checkov -d . --compact --quiet` on the whole repo; every
+  finding is fixed or has a written reason.
+- **rule:** Terraform passes its linter: no unused variables or outputs, no deprecated syntax, version constraints
+  set.
+  **probe:** `tflint --recursive` prints no warnings (rule `terraform_unused_declarations` finds dead variables).
+- **rule:** Shell scripts pass ShellCheck.
+  **probe:** `git ls-files '*.sh' | xargs shellcheck -S warning` prints nothing.
+- **rule:** Pipelines are safe: third-party actions pinned to a full commit SHA, the token has only the permissions
+  the job needs, and no untrusted input (PR titles, branch names, issue text) is pasted into a `run:` step.
+  **probe:** GitHub: `zizmor .github/workflows` and `actionlint` print no findings. Any CI (Gitea, GitLab, GitHub):
+  `grep -rnE 'uses: [^#]*@(v?[0-9]+(\.[0-9]+)*|main|master)\s*$' <workflow-dir>` lists actions not pinned to a SHA;
+  `grep -rnE '\$\{\{ *(github|gitea)\.event\.(pull_request|issue|comment|head_commit)' <workflow-dir>` lists untrusted
+  input to review.
+- **rule:** No copy-paste. The same block repeated across environments, modules, workflows or scripts belongs in one
+  module, `for_each`, shared workflow or function, so a fix lands everywhere at once.
+  **probe:** `npx jscpd@4.0.5 --min-lines 8 --format "bash,yaml" --ignore "**/.terraform/**,**/node_modules/**" .`
+  reports the duplicated share (it doesn't parse `.tf` files). For Terraform, compare the environment roots:
+  `diff -r <env-a-dir> <env-b-dir>`; differences should be only in variables and backend.
+- **rule:** No dead code: commented-out resources, scripts nothing calls, workflows that never run, modules no root
+  uses.
+  **probe:** for each script and module, `git grep -n <name>` finds a caller; `grep -rnE '^\s*#\s*(resource|module) "' --include='*.tf' .`
+  lists commented-out blocks.
+
 ## Secrets and identity
 
 - **rule:** Secrets live in a secret manager, never in code, images, state outputs or CI logs.

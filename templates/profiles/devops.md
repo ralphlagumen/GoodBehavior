@@ -27,7 +27,11 @@ truth-source: the live environment (provider APIs, real network paths, the state
   resource. **Cost:** over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing
   model, storage tier, idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every
   cost finding with all five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A
-  cost cut that weakens reliability is a contradiction between lenses: flag it, don't pick silently.
+  cost cut that weakens reliability is a contradiction between lenses: flag it, don't pick silently. **Code:** the
+  Terraform, pipelines, scripts and charts themselves: secrets in code and git history, misconfigurations, unsafe
+  pipelines, lint, copy-paste and dead code (rules and probes in `devops/baseline.md`, Code, plus `devops/terraform.md`,
+  `devops/shell.md`, `devops/helm.md`). Security, cost and code also each get their own checklist batch: see "Audit
+  coverage" below.
 - **pause points:** **every** change to infrastructure, in **any** environment, dev included: an apply, destroy or
   import; a state edit (`state rm`/`mv`/`push`); a CLI call that creates, updates, deletes, restarts or scales
   something; a `kubectl`/`helm` write; a playbook run; a change made over SSH. Infrastructure has no `git reset`. A
@@ -48,6 +52,36 @@ detection) and write each security finding so a non-expert can act on it:
 - **Fix:** the change that closes it, and what it costs or breaks.
 - **Evidence:** the probe output that shows the gap.
 Rank by likely impact, worst first. Never call something "secure"; say which checks passed and what was not checked.
+
+## Audit coverage: security, cost and code
+
+Area batches (network, data, compute…) find what their area shows; they miss whatever nobody went looking for. So
+every devops audit also runs three checklist batches of its own, after the area batches: **security**, **cost** and
+**code**. "No findings" from a pass that only looked at a few things is not a clean result.
+
+1. **Build the checklist from the installed guides**, so every rule gets a row. Run this from the project root and
+   paste the output into the batch file (`docs/audit/NN-security.md`, `NN-cost.md`, `NN-code.md`):
+   ```sh
+   awk 'FNR==1{g=FILENAME;sub(".*/","",g);sub(/\.md$/,"",g);n=0} /^## /{s=substr($0,4)} /^- \*\*rule:\*\*/{n++;k="";r=substr($0,13);gsub(/\|/,"/",r); if(g~/^(terraform|shell)$/&&s!~/Before running/||s~/IaC|CI\/CD|^Code$|Charts|Delivery/)k="code"; else if(s~/Security|Secrets|identity|Networking|Access|Supply chain/)k="security"; else if(s~/Cost/)k="cost"; if(k!="")printf "| %s | %s-%d | %s | %s | | |\n",k,g,n,s,r}' .claude/goodbehavior/profiles/devops/*.md
+   ```
+   Columns: lens, rule ID, section, rule, **result**, **evidence**. Every row gets one result: **pass** (with the
+   probe output), **finding** (with its ID), **not checked** (and why: no access, tool missing, pause point not
+   approved, guard stopped it), or **n/a** (and why). No blank rows.
+2. **Run the broad scanners too**, because a checklist only covers what it lists. All are read-only:
+   - Code: `gitleaks`, `trivy config`, `checkov`, `tflint`, `shellcheck`, `zizmor`/`actionlint`, `jscpd` (commands in
+     `devops/baseline.md`, Code).
+   - Cloud account: Prowler for AWS, Azure and GCP (`devops/aws.md`), or the provider's own security standard.
+   - Clusters: `trivy k8s`, `kubescape` or Prowler (`devops/kubernetes.md`).
+   - Images in use: `trivy image`.
+   A scanner that isn't installed is a **not checked** row with the install command, never a silent skip.
+3. **Cost uses real numbers.** Read the last full month's bill by service (Cost Explorer, `doctl invoice list`, the
+   portal) and 14–30 days of usage per resource. End the cost batch with a savings table, biggest first: item, now,
+   change, saving per month, risk. If the bill can't be read, say so at the top: every price is then an estimate.
+4. **Open each batch with a verdict in plain words**, for example: "Security: 7 risks found (2 high). 31 of 57 checks
+   passed, 12 not checked." or "Cost: about $410/mo could be saved; the bill was read for September." Never write
+   "secure", "optimized" or "clean"; give the counts and what was not checked.
+5. **The audit's final report to the user always has three short parts, security, cost and code**, each with its
+   counts and its worst three findings, even when a count is zero. Don't let reliability P0s crowd them out.
 
 ## Secrets
 

@@ -127,6 +127,20 @@ Cost of probing: Cost Explorer (`aws ce ...`) charges per API request. Run those
   **probe:** `aws guardduty list-detectors` returns a detector;
   `aws guardduty list-findings --detector-id <detector-id> --finding-criteria '{"Criterion":{"severity":{"Gte":7}}}'`
   has none unreviewed; `aws securityhub get-findings --filters '{"SeverityLabel":[{"Value":"CRITICAL","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}]}' --max-items 20`.
+- **rule:** Instances require IMDSv2, so a server-side request forgery bug in an app can't steal the instance's role
+  credentials (baseline: workload identity).
+  **probe:** `aws ec2 describe-instances --query "Reservations[].Instances[?MetadataOptions.HttpTokens!='required'].[InstanceId,MetadataOptions.HttpTokens]" --output text`
+  prints nothing.
+- **rule:** New disks are encrypted by default (baseline: nothing stored in the clear).
+  **probe:** `aws ec2 get-ebs-encryption-by-default` shows `true` in every region in use;
+  `aws ec2 describe-volumes --filters Name=encrypted,Values=false --query 'Volumes[].VolumeId' --output text` prints
+  nothing.
+- **rule:** The whole account is scanned against a standard, not only the services this guide names (baseline:
+  know the whole attack surface).
+  **probe:** Prowler (open source, read-only API calls; tested with 5.44):
+  `prowler aws --profile <profile> --region <region> --severity critical high --output-formats csv html`, and for card
+  data add `--compliance pci_4.0_aws`. If Security Hub is on, `aws securityhub get-enabled-standards` lists the CIS or
+  Foundational Best Practices standard. Every FAIL is a finding or has a written reason.
 - **rule:** Vulnerabilities in instances, images and functions are found (baseline: vulnerability scanning).
   **probe:** `aws inspector2 list-findings --filter-criteria '{"severity":[{"comparison":"EQUALS","value":"CRITICAL"}]}' --max-results 20`
   and `aws ecr describe-image-scan-findings --repository-name <repo> --image-id imageTag=<tag> --query 'imageScanFindings.findingSeverityCounts'`.
