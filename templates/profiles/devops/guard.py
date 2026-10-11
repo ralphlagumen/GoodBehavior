@@ -1331,6 +1331,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         binary, args = args[0], args[1:]
 
     name = binary.rsplit("/", 1)[-1]
+    if binary in FUNCS or (binary.endswith("()") and binary[:-2] in FUNCS) or binary == "function":
+        return None  # a function defined in this script: its body is checked where it is defined
     if name == "__SUBST__" or "__SUBST__" in binary:
         return ask("a command named by substitution", "can't be checked")
     if "$" in binary:
@@ -1556,6 +1558,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
 MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\(\s*mktemp\b[^)]*\)")
 STATUS_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\?")
 KNOWN = {}  # variables set to literals earlier in the command being checked; inherited by sh -c / xargs
+FUNCS = set()  # shell functions defined in the text being checked; their bodies are checked where defined
+FUNC_DEF = re.compile(r"(?m)^\s*(?:function\s+([A-Za-z_][\w-]*)|([A-Za-z_][\w-]*)\s*\(\s*\))")
 
 
 def substitute(text, known):
@@ -1566,9 +1570,12 @@ def substitute(text, known):
 
 def check_command(command, cwd, depth=0, raw=None):
     """The worst decision over every part of a shell command line, or None when all of it is safe."""
-    global KNOWN
+    global KNOWN, FUNCS
+    command = command.replace("\\\n", " ")  # line continuations
     raw = raw if raw is not None else command
     outer, known = KNOWN, dict(KNOWN)
+    outer_funcs = FUNCS
+    FUNCS = FUNCS | {a or b for a, b in FUNC_DEF.findall(command)}
     for m in MKTEMP_ASSIGN.finditer(command):
         known[m.group(1)] = "/tmp/__mktemp__"
     for m in STATUS_ASSIGN.finditer(command):
@@ -1577,7 +1584,7 @@ def check_command(command, cwd, depth=0, raw=None):
         KNOWN = known
         return _check_command(command, cwd, depth, raw, known)
     finally:
-        KNOWN = outer
+        KNOWN, FUNCS = outer, outer_funcs
 
 
 def _check_command(command, cwd, depth, raw, known):

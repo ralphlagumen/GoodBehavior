@@ -24,6 +24,8 @@ or local), softer outcome: anything else **asks** instead of being denied, so in
   `docker inspect` without `--format`, `docker exec … env`. Also denies on any crash (fail closed), and turns every
   ask into a deny when permissions are bypassed.
 - **Logs** every ask and deny to `.claude/goodbehavior/guard.log` (permission mode included; no secret values).
+- Scripts: functions defined in the script (`die() { … }`) are recognized and their bodies checked; `\`-continued
+  lines are joined first (a real tunnel script with `exec aws ssm start-session \` now runs).
 - `done-gate.py` hands PreToolUse to an installed `profiles/**/guard.py`; a guard that fails to load denies. Without
   one, the old text-matching guard still applies. `install.py` wires PreToolUse on `*` (so `Monitor` and MCP tools
   reach it) and accepts `devops/guard.py` as a profile entry; `adopt` adds it with the devops profile.

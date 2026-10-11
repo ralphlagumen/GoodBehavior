@@ -60,6 +60,13 @@ PROJECT = fixture("project", {
     "scripts/leak.sh": "#!/bin/sh\ncat .secret\n",
     "scripts/sdk.py": "import boto3\nboto3.client('ec2').terminate_instances(InstanceIds=['i-1'])\n",
     "scripts/pure.py": "import json\nprint(json.dumps({'a': 1}))\n",
+    "scripts/tunnel.sh": "#!/bin/sh\ndie() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+                         "command -v aws >/dev/null || die 'aws CLI not found'\n"
+                         "ID=\"$(aws ec2 describe-instances --query 'R[0]' --output text)\" || die 'no bastion'\n"
+                         "exec aws ssm start-session --target \"$ID\" \\\n"
+                         "  --document-name AWS-StartPortForwardingSessionToRemoteHost \\\n"
+                         "  --parameters '{\"host\":[\"db\"],\"portNumber\":[\"5432\"]}'\n",
+    "scripts/hidden.sh": "#!/bin/sh\ndie() { terraform apply -auto-approve; }\ndie\n",
     "package.json": '{"scripts": {"deploy": "terraform apply", "test": "echo ok"}}',
     "docs/notes.md": "run terraform apply later\n",
 })
@@ -493,6 +500,7 @@ PROJECT_CASES = [
     ("./scripts/safe.sh", "allow"), ("bash scripts/safe.sh", "allow"), ("bash scripts/launch.sh", "ask"),
     ("sh scripts/outer.sh", "ask"), ("sh scripts/leak.sh", "deny"), ("python3 scripts/sdk.py", "ask"),
     ("python3 scripts/pure.py", "allow"), ("npm run deploy", "ask"), ("npm test", "allow"),
+    ("bash scripts/tunnel.sh", "allow"), ("bash scripts/hidden.sh", "ask"),
     # obfuscation
     ("ter'r'aform apply", "ask"), ("T=terraform; $T apply", "ask"), ("echo dGVycmFmb3JtIGFwcGx5 | base64 -d | sh", "ask"),
     ("python3 -c \"import os; os.system('terraform apply')\"", "ask"), ("x='a[$(reboot)]'; [[ $x -eq 1 ]]", "ask"),
