@@ -3,6 +3,44 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops: cost in every audit and proposal
+
+- `devops.md`: new **audit lenses** slot (wiring, security, reliability, drift, cost). The cost lens looks for
+  over-provisioning, under-provisioning, redundancy the requirements don't need, the wrong pricing model, storage
+  tier, idle resources and data transfer. Every cost finding states now / change / saving (labeled an estimate) /
+  performance and risk / way back. A cost cut that weakens reliability is flagged as a lens conflict.
+- New "Cost in every proposal" section: look for the same performance at lower cost on every design, change or
+  review, size from 14+ days of real usage, never drop redundancy an availability target needs without asking.
+  Propose-then-ask gains a cost line; the change gate asks about bill impact.
+- `devops/baseline.md` Cost: six new rule/probe pairs (over- and under-provisioning, redundancy vs target, pricing
+  model, storage tier, data transfer).
+- `audit-goodbehavior`: one line pointing devops audits at the profile's lenses.
+- Tested: a real `/audit-goodbehavior` run on a scratch over-provisioned Terraform project produced cost findings in
+  the five-part format, flagged the cost-vs-backup conflict, and changed no files under `infra/`.
+- `devops/shell.md`: shellcheck probes now tested (SC2086, SC3010, SC3030; the template passes clean).
+
+## 2026-10-11 — devops: shell script guide
+
+- `templates/profiles/devops/shell.md`: rules for writing and running shell scripts, from Cycle.io's "Shell Scripting
+  Best Practices", each with a probe: read a script before running it and ask if it changes anything; strict mode;
+  dry run by default with `--apply`; input checks; quoting and `--`; `mktemp -d` + `trap` cleanup; no `eval` or
+  secrets; descriptive names; `printf`; POSIX vs bash shebang; `bash -n`/`shellcheck`. Ends with a tested template.
+- Corrections to the article, tested with bash 5.3: `set -e` alone let a failed pipeline continue and turned a
+  variable typo into `/old`; `set -euo pipefail` stops both, but failures inside functions called from `if` are
+  still ignored. The article's `rm -rf /tmp/*` cleanup deletes other programs' files; use `mktemp -d` + `trap`.
+- The guard hook can't see inside a script, so the guide makes reading it first a rule.
+
+## 2026-10-11 — devops: Terraform guide
+
+- `templates/profiles/devops/terraform.md`: rules for a safe Terraform/OpenTofu apply, from Paweł Piwosz's "10
+  Terraform best practices that actually matter", each with a probe run against Terraform 1.15: saved plan only, list
+  every delete/replace from `show -json` before asking, `plan -detailed-exitcode` after apply, remote locked state,
+  split state, one directory per environment, validated variables, pinned versions, `templatefile()`, module READMEs.
+- Corrections to the article: S3 locking uses `use_lockfile = true` (Terraform 1.15 deprecates `dynamodb_table`);
+  `most_recent` image lookups can force a replace; added `prevent_destroy` on stateful resources and a
+  user-approved `force-unlock`.
+- `devops.md` and `adopt-goodbehavior` offer tool guides next to provider guides. Lint checks the new guide.
+
 ## 2026-10-11 — devops: ask before every infra change
 
 Infrastructure has no `git reset`: a deleted database or a wrong firewall rule can't be reverted. So:

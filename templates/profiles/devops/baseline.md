@@ -123,3 +123,28 @@ How to run probes:
   **probe:** list unattached volumes, unassociated IPs and snapshots older than retention; each has an owner or goes.
 - **rule:** Non-prod is sized down and scheduled off when unused.
   **probe:** read the schedules and instance sizes for non-prod; compare against prod.
+- **rule:** Not over-provisioned: sizes match real use. Low average and p95 use over 14+ days (for example CPU under
+  20% and memory under 40%) means a smaller size, a burstable type or autoscaling.
+  **probe:** pull 14–30 days of CPU, memory, disk and network use (average and p95) for each instance, database and
+  node pool, and compare with its size. Memory often needs the provider's agent; say if it's missing.
+- **rule:** Not under-provisioned: running hot costs money too (slow responses, crashes, retries, extra replicas
+  added to compensate). Sometimes one bigger size is cheaper than several small ones.
+  **probe:** look for p95 CPU over 80%, out-of-memory kills, exhausted burst credits, throttled disk or API calls,
+  long queues, and autoscaling stuck at its maximum.
+- **rule:** Redundancy matches the written availability target. Prod keeps what the target needs. Dev and test don't
+  run multi-zone databases, a NAT gateway per zone or spare replicas unless there's a reason. No two resources doing
+  the same job (unused load balancers, duplicate log pipelines, forgotten replicas).
+  **probe:** list multi-zone, replicated and duplicated resources per environment and match each to the availability
+  target. Anything that backs the target stays unless the user decides otherwise.
+- **rule:** The pricing model fits the usage: commitments (reserved capacity, savings plans, committed use) for
+  steady 24/7 load; spot or preemptible for work that can be interrupted; serverless or autoscaling for spiky load.
+  Newer instance generations and ARM types often give the same performance for less.
+  **probe:** read the commitment coverage and utilization reports, and list instance families and generations in
+  use against what is current.
+- **rule:** Storage sits in the right tier: lifecycle rules move or expire old objects, logs have a retention, disk
+  types match the IOPS really used.
+  **probe:** list buckets without lifecycle rules, log groups without retention, and disks with provisioned IOPS far
+  above measured use.
+- **rule:** Data transfer is known and kept low: cross-zone, cross-region and NAT traffic are billed. Use private or
+  gateway endpoints for the provider's storage and APIs; keep chatty services in the same zone.
+  **probe:** break the bill down by usage type and check NAT bytes processed and inter-zone/region transfer.

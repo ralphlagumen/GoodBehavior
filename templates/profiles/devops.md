@@ -19,6 +19,13 @@ truth-source: the live environment (provider APIs, real network paths, the state
   but nothing probed it; probing from inside the same host or with admin credentials, so a firewall or IAM gap stays
   hidden; a backup that exists but was never restored; verified in dev, claimed for prod; a console change that never
   made it into code.
+- **audit lenses:** run each as its own pass, then compare. **Wiring:** does it work from the consumer's position
+  (reachable, resolvable, allowed)? **Security:** exposure, identities and least privilege, secrets. **Reliability:**
+  single points of failure, backups restore-tested, failover. **Drift:** code vs state vs live resource. **Cost:**
+  over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing model, storage
+  tier, idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every cost finding
+  with all five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A cost cut that weakens
+  reliability is a contradiction between lenses: flag it, don't pick silently.
 - **pause points:** **every** change to infrastructure, in **any** environment, dev included: an apply, destroy or
   import; a state edit (`state rm`/`mv`/`push`); a CLI call that creates, updates, deletes, restarts or scales
   something; a `kubectl`/`helm` write; a playbook run; a change made over SSH. Infrastructure has no `git reset`. A
@@ -46,7 +53,22 @@ Before running anything that changes infrastructure, show the user this and wait
    destroy or replace in the plan by name.
 5. **How to undo it:** the way back, or a plain "this can't be undone" (deleted data, replaced resources).
 6. **Where it runs:** environment and account/subscription/project.
-7. **Your call:** "Do you want me to run this?" Then stop. No yes, no change.
+7. **Cost:** what this changes in the monthly bill, and any cheaper option with the same performance (see "Cost in
+   every proposal" below).
+8. **Your call:** "Do you want me to run this?" Then stop. No yes, no change.
+
+## Cost in every proposal
+
+Whenever you design, change or review infrastructure, look for the same performance at a lower cost, and say what
+you found even when it wasn't asked. Each cost suggestion states:
+- **Now:** what it costs today, from the bill or the provider's pricing page. Say which.
+- **Change:** what you would change (size, tier, pricing model, schedule, removal).
+- **Saving:** the estimated monthly saving. Label it an estimate and say how you got it.
+- **Performance and risk:** what happens to speed, capacity and availability. Base sizing on real usage data (14 days
+  or more), not a guess.
+- **Way back:** how to undo it if performance drops.
+Never remove redundancy that an availability requirement depends on without asking. Under-provisioning is also a
+cost (slow responses, crashes, retries, extra replicas), so a bigger size can be the cheaper fix.
 
 ## Talk plainly
 
@@ -64,8 +86,9 @@ Assume the user is not an infrastructure expert. Many people now build with AI a
 
 **Guides** (in `devops/` next to this file; install only the ones that match): `baseline` has the cross-cloud rules,
 each paired with its live probe (IaC and state, CI/CD, secrets and identity, networking, observability, backup/DR,
-cost). It always comes with this profile. Then add one provider guide per platform in use. Each maps the baseline rules
-to that platform's services and CLI probes.
+cost). It always comes with this profile. Then add one provider guide per platform in use (each maps the baseline rules
+to that platform's services and CLI probes) and one tool guide per IaC tool in use (`terraform`: safe plan and apply,
+state, environments, code; `shell`: writing and running scripts safely).
 
 ## Done-gate questions
 
@@ -99,6 +122,7 @@ match: \b(systemctl\s+(start|stop|restart|reload|enable|disable|mask)|reboot|shu
   denied call)? Show the output.
 - Any state edit, import or console change? Is it in code now, and did the user approve it?
 - What is the rollback, and has it been tried?
+- What does this change in the monthly bill? Is there a cheaper option with the same performance, and did you say so?
 - Is your reply in plain words someone without infra experience can follow, with every risk stated plainly?
 
 ### gate: investigation
