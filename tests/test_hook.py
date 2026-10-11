@@ -158,6 +158,48 @@ def run_guard(command, project_dir):
     return r.returncode, out.get("hookSpecificOutput", {}).get("permissionDecision", "pass")
 
 
+# A project with a Makefile, scripts and secret files: the guard must see through wrappers and protect secrets.
+PROJECT_FILES = {
+    "Makefile": "-include .secret\nTF = terraform -chdir=IaC/env/dr\n\ninfra_plan: guard\n\t$(TF) plan\n"
+                "infra_apply: guard\n\t$(TF) apply tfplan\ndeploy: infra_apply\nrelease:\n\t$(MAKE) deploy\n"
+                "guard:\n\t@echo checking account\ntest:\n\t./scripts/run-tests.sh\nlaunch:\n\tbash scripts/launch.sh\n",
+    "scripts/launch.sh": "#!/bin/sh\n# starts replication\naws mgn start-replication --source-server-id s-1\n",
+    "scripts/nested.sh": "#!/bin/sh\n./scripts/launch.sh\n",
+    "scripts/run-tests.sh": "#!/bin/sh\nterraform test\n",
+    "scripts/safe.sh": "#!/bin/sh\necho hi\nls -la\n",
+    "scripts/leak.sh": "#!/bin/sh\ncat .secret\n",
+    "scripts/sdk.py": "import boto3\nboto3.client('ec2').terminate_instances(InstanceIds=['i-1'])\n",
+    "scripts/readonly.py": "import boto3\nprint(boto3.client('ec2').describe_instances())\n",
+    ".secret": "TOKEN=x\n", ".env": "A=1\n", ".env.example": "A=\n",
+}
+PROJECT_BASH = [
+    ("make infra_plan", "pass"), ("make infra_apply", "ask"), ("make deploy", "ask"), ("make release", "ask"),
+    ("make", "pass"), ("make -C . infra_apply", "ask"), ("make test", "pass"), ("make launch", "ask"),
+    ("bash scripts/launch.sh", "ask"), ("./scripts/nested.sh", "ask"), ("./scripts/safe.sh", "pass"),
+    ("sh scripts/leak.sh", "ask"), ("python3 scripts/sdk.py", "ask"), ("python3 scripts/readonly.py", "pass"),
+    ("python3 -c \"import boto3; boto3.client('ec2').terminate_instances(InstanceIds=['i'])\"", "ask"),
+    ("curl --aws-sigv4 aws:amz:us-east-1:ec2 https://ec2.amazonaws.com", "ask"),
+    ("cat .env", "deny"), ("grep TOKEN .secret", "deny"), ("tail -n 2 .secret", "deny"), ("cat < .env", "deny"),
+    ("echo 'B=2' >> .env", "pass"), ("sed -i 's/^A=.*/A=3/' .env", "pass"), ("cat .env.example", "pass"),
+    ("stat .secret", "pass"), ("git check-ignore .secret .env", "pass"), ("set -a; . ./.secret; set +a; make infra_plan", "pass"),
+    ("aws secretsmanager get-secret-value --secret-id prod/db", "deny"), ("terraform output -json", "deny"),
+    ("terraform output -json | jq keys", "pass"), ("printenv", "deny"), ("kubectl get secret db -o yaml", "deny"),
+    ("gcloud auth print-access-token", "deny"), ("az keyvault secret show --vault-name v -n s", "deny"),
+]
+PROJECT_TOOLS = [("Read", ".env", "deny"), ("Read", ".secret", "deny"), ("Read", ".env.example", "pass"),
+                 ("Read", "~/.aws/credentials", "deny"), ("Read", "Makefile", "pass"), ("Grep", ".secret", "deny"),
+                 ("Edit", ".env", "pass")]
+
+
+def run_tool(tool, tool_input, project_dir, cwd):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=project_dir)
+    r = subprocess.run([sys.executable, HOOK], env=env, capture_output=True, text=True,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool,
+                                         "tool_input": tool_input, "cwd": cwd}))
+    out = json.loads(r.stdout) if r.stdout.strip() else {}
+    return out.get("hookSpecificOutput", {}).get("permissionDecision", "pass")
+
+
 def main():
     failures = 0
     profile_dir = tempfile.mkdtemp()
@@ -187,6 +229,24 @@ def main():
         print(f"        {b}")
     failures += bool(guard_bad)
     cases += [None]
+
+    project = tempfile.mkdtemp()
+    for rel, body in PROJECT_FILES.items():
+        os.makedirs(os.path.dirname(os.path.join(project, rel)), exist_ok=True)
+        with open(os.path.join(project, rel), "w") as f:
+            f.write(body)
+    bad = [f"{c!r}: want {w}, got {g}" for c, w in PROJECT_BASH
+           if (g := run_tool("Bash", {"command": c}, profile_dir, project)) != w]
+    bad += [f"{tool} {path}: want {w}, got {g}" for tool, path, w in PROJECT_TOOLS
+            if (g := run_tool(tool, {"file_path": os.path.expanduser(path) if path.startswith("~") else os.path.join(project, path)},
+                              profile_dir, project)) != w]
+    print(f"  {'PASS' if not bad else 'FAIL'}  guard: make targets, scripts, inline code and secrets "
+          f"({len(PROJECT_BASH) + len(PROJECT_TOOLS)} cases)")
+    for b in bad:
+        print(f"        {b}")
+    failures += bool(bad)
+    cases += [None]
+    shutil.rmtree(project, ignore_errors=True)
     shutil.rmtree(profile_dir, ignore_errors=True)
     shutil.rmtree(empty_dir, ignore_errors=True)
     print(f"test_hook: {len(cases) - failures}/{len(cases)} passed")

@@ -95,6 +95,62 @@ How to run probes:
 - **rule:** The cloud audit log is on in every account/region and stored where workloads cannot delete it.
   **probe:** confirm the audit trail is enabled and logging, then try to delete it as a workload identity: denied.
 
+## Security and attack surface
+
+Assume every public endpoint is being scanned and attacked right now by automated tools. Each probe below shows
+whether a defense is really on. Write findings in the "Security findings" format from `devops.md` (risk, how
+likely, impact, fix, evidence), in plain words. Probes that send attack-like traffic are marked **(pause point)**:
+they can trip alerts or get your own address blocked, so ask first and run them against non-prod where you can.
+
+- **rule:** Know the whole attack surface: every public IP, DNS name, load balancer, bucket and open port is listed
+  and owned.
+  **probe:** list public addresses and DNS records from the provider (see the provider guide), then from outside
+  scan only your own addresses: **(pause point)** `nmap -Pn --top-ports 100 <your-public-ip>`. Every open port has
+  a reason.
+- **rule:** No dangling DNS: no record points at a resource that no longer exists (an attacker can claim it and
+  serve content on your name).
+  **probe:** `dig +short CNAME <name>` for each record; the target still exists and is yours.
+- **rule:** Public web apps and APIs sit behind a WAF or CDN with managed rule sets on: SQL injection, cross-site
+  scripting, known bad inputs, plus rate-based rules.
+  **probe:** read the WAF config (provider guide). **(pause point)** from outside, send one harmless test pattern and
+  expect a block: `curl -s -o /dev/null -w '%{http_code}\n' "https://<host>/?id=1%27%20OR%20%271%27=%271"` returns
+  `403`.
+- **rule:** The origin can't be reached around the WAF: servers and load balancers accept traffic only from the CDN
+  or WAF.
+  **probe:** connect straight to the origin address: `curl -sk -o /dev/null -w '%{http_code}\n' --connect-timeout 5 --resolve <host>:443:<origin-ip> https://<host>/`
+  fails or times out.
+- **rule:** DDoS and abuse limits are on: the provider's network-level protection, and rate limits on login, signup,
+  password reset, search and costly API calls.
+  **probe:** read the rate-limit rules (provider guide, or the CDN). **(pause point)** in non-prod, send a burst:
+  `for i in $(seq 1 60); do curl -s -o /dev/null -w '%{http_code}\n' https://<host>/login; done | sort | uniq -c`
+  shows `429` (or the WAF's block code) once the limit is passed.
+- **rule:** Bot protection on login, signup, checkout and contact forms (bot management, CAPTCHA or a challenge), so
+  credential stuffing and fake sign-ups are stopped.
+  **probe:** read the bot rules on those paths in the WAF or CDN config, and check the WAF log for blocked bot
+  traffic.
+- **rule:** Injection can't reach the data: the WAF blocks known patterns, the app uses parameterized queries, and
+  the app's database user has only the rights it needs (no owner, superuser or schema-change rights).
+  **probe:** list the app user's grants (`\du` and `\dp` in `psql`, `SHOW GRANTS FOR '<user>'@'%';` in MySQL, the
+  user's role memberships in SQL Server); no admin or DDL rights.
+- **rule:** TLS 1.2 or higher only, with HSTS and basic security headers.
+  **probe:** `openssl s_client -connect <host>:443 -servername <host> -tls1_1 -cipher 'DEFAULT@SECLEVEL=0' </dev/null`
+  fails with a handshake or protocol-version alert. (Without `-cipher 'DEFAULT@SECLEVEL=0'`, OpenSSL 3+ refuses
+  TLS 1.1 on its own side, so the probe "fails" even when the server would accept it.)
+  `curl -sI https://<host> | grep -iE 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'`
+  shows each header.
+- **rule:** Admin access never faces the internet: no public SSH, RDP or database ports; use the provider's session
+  manager, a bastion, a VPN or zero-trust access, with MFA.
+  **probe:** from outside, `nc -zv -w 3 <host> 22` and `nc -zv -w 3 <host> 3389` fail.
+- **rule:** Known vulnerabilities are found and fixed: infrastructure code, container images and servers are scanned,
+  and HIGH or CRITICAL findings have an owner and a date.
+  **probe:** `trivy config --severity HIGH,CRITICAL --exit-code 1 <iac-dir>` and `checkov -d <iac-dir> --compact --quiet`
+  pass; `trivy image --severity HIGH,CRITICAL <image>` for each image in use; the provider's vulnerability findings
+  (provider guide).
+- **rule:** Threat detection is on and someone reads it: the provider's detection service, WAF logs, and alerts on
+  spikes of blocked requests, 4xx/5xx and failed logins.
+  **probe:** the detection service is enabled with no unreviewed high or critical findings (provider guide); a
+  recent WAF log entry can be found.
+
 ## Backup and DR
 
 - **rule:** Every stateful store (databases, volumes, buckets, state files) has automated backups with a known

@@ -84,6 +84,27 @@ Before any probe, confirm which team and token context you are using, and say it
 - **rule:** Public endpoints have an uptime check (baseline: uptime probe from outside).
   **probe:** `doctl monitoring uptime list`.
 
+## Security and attack surface
+
+DigitalOcean has network-level DDoS protection but no WAF, bot management or rate limiting of its own. Put a CDN or
+WAF in front of public apps (for example Cloudflare), and check those defenses there.
+
+- **rule:** Public apps sit behind an external WAF/CDN with managed rules, rate limits and bot protection, and the
+  origin only accepts traffic from it (baseline: WAF, injection, bots, rate limits, origin locked).
+  **probe:** in the WAF/CDN, the managed rule set, rate-limit and bot rules are on; on DigitalOcean, the Cloud
+  Firewall inbound rules for web ports allow only the CDN's published address ranges
+  (`doctl compute firewall get <firewall-id> --format Name,InboundRules`).
+- **rule:** Load balancers redirect HTTP to HTTPS and use managed certificates (baseline: TLS).
+  **probe:** `doctl compute load-balancer get <lb-id> --format Name,RedirectHttpToHttps,ForwardingRules`.
+- **rule:** Admin access over a VPN or the droplet console, not SSH open to the world; SSH keys only (baseline:
+  admin access never public).
+  **probe:** the firewall probe in Networking shows no 22 from `0.0.0.0/0`; on the droplet, `sshd -T` shows
+  `passwordauthentication no` (see `onprem.md`).
+- **rule:** Images and droplets are scanned for vulnerabilities, since DigitalOcean doesn't do it for you
+  (baseline: vulnerability scanning).
+  **probe:** `trivy image --severity HIGH,CRITICAL <image>` for each image; on droplets, the patch probes in
+  `onprem.md`.
+
 ## Backup and DR
 
 - **rule:** Droplets with data have backups on; managed databases have daily backups (baseline: automated

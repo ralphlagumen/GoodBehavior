@@ -96,6 +96,34 @@ Before any probe, confirm which tenant and subscription you are in, and say it i
 - **rule:** Public endpoints have an outside availability test (baseline: uptime probe from outside).
   **probe:** `az resource list --resource-type Microsoft.Insights/webtests --query "[].name"`.
 
+## Security and attack surface
+
+- **rule:** Public apps sit behind a WAF (Front Door or Application Gateway) with the managed OWASP/default rule set,
+  bot protection and rate limits, in Prevention mode (baseline: WAF, injection, bots, rate limits).
+  **probe:** `az network application-gateway waf-policy list -g <rg> --query "[].{name:name,mode:policySettings.mode,rules:managedRules.managedRuleSets[].ruleSetType}"`;
+  Front Door policies: `az resource list --resource-type Microsoft.Network/FrontDoorWebApplicationFirewallPolicies --query "[].id" -o tsv`,
+  then `az resource show --ids <policy-id> --query "properties.{mode:policySettings.mode,state:policySettings.enabledState,rules:managedRules.managedRuleSets[].ruleSetType}"`.
+  Mode is `Prevention`, not `Detection`.
+- **rule:** Nothing public bypasses the WAF: app services and VMs accept traffic only from Front Door or the
+  Application Gateway (baseline: origin locked).
+  **probe:** `az webapp config access-restriction show -g <rg> -n <app>` allows only the `AzureFrontDoor.Backend`
+  service tag (with the Front Door ID header check); public IPs `az network public-ip list --query "[].{name:name,ip:ipAddress,attachedTo:ipConfiguration.id}" -o table`
+  each has a reason.
+- **rule:** DDoS protection fits the risk: basic protection is automatic; DDoS Network Protection for
+  business-critical virtual networks (baseline: DDoS limits).
+  **probe:** `az network ddos-protection list --query "[].{name:name,vnets:virtualNetworks[].id}"`.
+- **rule:** TLS 1.2+ everywhere (baseline: TLS).
+  **probe:** `az webapp config show -g <rg> -n <app> --query "{minTls:minTlsVersion,ftps:ftpsState,httpsOnly:httpsOnly}"`
+  and the storage `minimumTlsVersion` from the Networking probe show `1.2`.
+- **rule:** Admin access through Azure Bastion or just-in-time access, not open SSH or RDP (baseline: admin access
+  never public).
+  **probe:** `az resource list --resource-type Microsoft.Network/bastionHosts --query "[].name"`; the NSG probe in Networking shows no 22 or 3389 open to
+  the internet.
+- **rule:** Microsoft Defender for Cloud is on and read (baseline: detection and vulnerability scanning).
+  **probe:** `az security pricing list --query "value[].{plan:name,tier:pricingTier}" -o table` shows `Standard` for
+  servers, containers, databases and storage in use; `az security alert list --query "[?status=='Active'].{alert:alertDisplayName,severity:severity}" -o table`
+  and `az security assessment list --query "[?status.code=='Unhealthy'].displayName"` have owners.
+
 ## Backup and DR
 
 - **rule:** Every VM, database and file share is in a backup policy with recent backups (baseline: automated

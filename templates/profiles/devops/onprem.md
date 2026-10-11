@@ -83,6 +83,23 @@ which host and environment you are on: `hostname -f` and the inventory group it 
   **probe:** `sudo smartctl -H /dev/<disk>` reports `PASSED`; `cat /proc/mdstat` (software RAID) shows no failed
   members (`[UU]`); `df -h` and `df -i` show headroom on every filesystem.
 
+## Security and attack surface
+
+- **rule:** Public web apps sit behind a WAF (an external CDN/WAF, or ModSecurity with the OWASP Core Rule Set on the
+  reverse proxy) with rate limits on login and API paths (baseline: WAF, injection, rate limits).
+  **probe:** the reverse proxy config loads the rule set and limits (`sudo nginx -T | grep -iE 'modsecurity|limit_req'`
+  or the Apache equivalent), and `sudo nginx -t` passes.
+- **rule:** Brute force and abusive clients are banned automatically (baseline: bots, detection).
+  **probe:** `sudo fail2ban-client status` lists jails for SSH and the web app, or `sudo cscli decisions list`
+  (CrowdSec) shows active bans.
+- **rule:** Servers are patched, and security updates install on their own (baseline: vulnerability scanning).
+  **probe:** `apt list --upgradable 2>/dev/null | grep -i security` is empty or recent;
+  `systemctl is-enabled unattended-upgrades` is `enabled`; `sudo needrestart -b` shows no pending kernel or service
+  restarts. A read-only hardening scan: `sudo lynis audit system --quick`.
+- **rule:** Only expected ports are reachable from the internet (baseline: attack surface).
+  **probe:** **(pause point)** from outside your network, `nmap -Pn --top-ports 100 <public-ip>` shows only the
+  ports you publish.
+
 ## Backup and DR
 
 - **rule:** Follow 3-2-1: three copies, two kinds of media, one off-site (baseline: automated backups).

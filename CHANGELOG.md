@@ -3,6 +3,36 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops: guard sees inside make/scripts, protects secrets; security in every audit
+
+- **Guard** (`done-gate.py`, PreToolUse): follows `make` targets (prerequisites, variables, includes, recursive
+  `$(MAKE)` calls), scripts (shell, Python, Node, Ruby, Perl), scripts they call and inline code, up to 3 levels. A
+  harmless run (nothing that changes infrastructure or touches secrets) just runs; a risky one asks and names the
+  line it found (for example `Makefile:infra_apply: terraform apply tfplan`).
+- **Secrets:** new `### gate: secrets` section in the profile. `files:` lists secret files (`.secret`, `.env` but not
+  `.env.example`, cloud CLI credential caches, kube config, SSH keys, `*.tfstate`); `match:` lists commands that
+  print secrets (secret-manager reads, token printers, `terraform output -json` unless piped to a filter, `printenv`).
+  Reading a secret file (Read, Grep, or `cat`/`grep`/`tail`/... in Bash) or running such a command is **denied**.
+  Writing without reading (`>> .env`, `sed -i`) is allowed. `devops.md` adds the `.secret` file convention.
+- **Change detection** also catches cloud SDK write calls in code (`.terminate_instances(`, `begin_delete(`) and
+  signed raw API calls (`curl --aws-sigv4`).
+- `install.py` wires the guard on `Bash|Read|Grep` (was `Bash`). **Existing adopters:** change the PreToolUse
+  matcher for `done-gate.py` in `settings.json` by hand; `/update-goodbehavior` doesn't touch settings.
+- **Security in audits:** the security lens now covers the attack surface against automated attacks (DDoS, bots,
+  injection, exposure, patching, detection). Each finding states risk, how likely, impact, fix and evidence, in plain
+  words. New baseline section "Security and attack surface" (11 rule/probe pairs) and a matching section in every
+  provider guide (AWS WAF/Shield/GuardDuty/Inspector/Security Hub; Azure WAF/DDoS/Defender; GCP Cloud Armor/SSL
+  policies/SCC; DigitalOcean: external WAF + firewall; on-prem: ModSecurity, fail2ban/CrowdSec, patching, lynis).
+- Fixed a probe that would have passed every server: `openssl s_client -tls1_1` fails on the client side under
+  OpenSSL 3+; the probe now adds `-cipher 'DEFAULT@SECLEVEL=0'` (tested: example.com does accept TLS 1.1).
+- `shell.md`: assess a script's risk first; run it if harmless, otherwise explain why it needs to run, what could
+  go wrong and what it fixes, then ask.
+- `update.py`/`install.py` expand `~` in the source path; `install.py` keeps `updatedAt` when adding files.
+- Tested: 40 new guard cases (make, scripts, inline code, secrets) plus the 280 command cases; all CLI commands in
+  the guides parse (232); on-prem security tools run in Debian 12; real `claude -p` runs with permissions skipped:
+  `make infra_apply` stopped with the hidden line named, `Read .secret` blocked (canary never printed), a harmless
+  script ran.
+
 ## 2026-10-11 — devops: guide commands checked in the self-test; on-prem Linux probes run
 
 - `tests/test_guide_cli.py`: every `aws`, `az`, `gcloud` and `doctl` command in the devops guides is parsed by the

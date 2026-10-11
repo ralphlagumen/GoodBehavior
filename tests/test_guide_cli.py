@@ -27,6 +27,11 @@ SUBS = {
     "<role-arn>": "arn:aws:iam::123456789012:role/dummy",
     "<arn>": "arn:aws:access-analyzer:us-east-1:123456789012:analyzer/x",
     "<tg-arn>": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/x/1",
+    "<acl-arn>": "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/x/00000000-0000-0000-0000-000000000000",
+    "<lb-arn>": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/x/1",
+    "<acl-id>": "00000000-0000-0000-0000-000000000000", "<image>": "us-docker.pkg.dev/p/r/i:tag",
+    "<policy-id>": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/"
+                   "Microsoft.Network/FrontDoorWebApplicationFirewallPolicies/p",
     "<account-id>": "123456789012",
     "<30-days-ago>": "2026-01-01T00:00:00Z", "<now>": "2026-01-31T00:00:00Z", "<yyyy-mm-dd>": "2026-01-01",
     "<iso-time>": "2026-01-01T00:00:00Z",

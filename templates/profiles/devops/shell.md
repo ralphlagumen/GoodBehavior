@@ -11,12 +11,14 @@ marked "tested" were run with bash 5.3, dash and shellcheck 0.11 on macOS. Runni
 
 ## Before running a script
 
-- **rule:** Read the whole script before running it. If it changes anything (deletes, moves, restarts, calls a
-  cloud CLI, `kubectl`, `terraform`, `ssh`, a `curl -X POST/PUT/DELETE`), treat the run as a change: explain what it
-  will do and ask first.
-  **probe:** `grep -nE 'rm |mv |kubectl|terraform|helm|aws |az |gcloud|doctl|ssh |curl .*-X' script.sh` and show the
-  user what you found. **Note:** the guard hook only sees `./script.sh`, not what is inside it, so it can't catch
-  this for you.
+- **rule:** Assess a script's risk before running it. Read it whole. If it only reads, builds, tests or plans, and
+  prints nothing secret, run it. If it changes anything (deletes, moves, restarts, calls a cloud CLI, `kubectl`,
+  `terraform apply`, `ssh`, `curl -X POST/PUT/DELETE`) or touches secrets, don't run it yet: tell the user in plain
+  words why it needs to run, what it will change, what could go wrong and what it fixes, then ask.
+  **probe:** `grep -nE 'rm |mv |kubectl|terraform|helm|aws |az |gcloud|doctl|ssh |curl .*-X|\.secret|\.env' script.sh`
+  and show the user what you found. The guard hook does the same check: it reads the script (and scripts it calls,
+  and `make` targets) and asks the user when it finds a change or a secret, so a risky line can't hide behind
+  `./script.sh` or `make deploy`.
 
 ## Safety
 

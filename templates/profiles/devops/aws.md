@@ -97,6 +97,40 @@ Cost of probing: Cost Explorer (`aws ce ...`) charges per API request. Run those
   **probe:** `aws route53 list-health-checks --query 'HealthChecks[].HealthCheckConfig.[FullyQualifiedDomainName,Type]'`
   or `aws synthetics describe-canaries --query 'Canaries[].[Name,Status.State]'`.
 
+## Security and attack surface
+
+- **rule:** Public apps sit behind AWS WAF with managed rules: core rule set, SQL injection, known bad inputs, bot
+  control on login and signup, and a rate-based rule (baseline: WAF, injection, bots, rate limits).
+  **probe:** `aws wafv2 list-web-acls --scope REGIONAL --query 'WebACLs[].[Name,Id,ARN]' --output text` (and
+  `--scope CLOUDFRONT --region us-east-1` for CloudFront); for each,
+  `aws wafv2 get-web-acl --name <acl-name> --scope REGIONAL --id <acl-id> --query 'WebACL.Rules[].Name'` lists
+  `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet`, a
+  rate-based rule, and `AWSManagedRulesBotControlRuleSet` where bots matter;
+  `aws wafv2 list-resources-for-web-acl --web-acl-arn <acl-arn>` shows every public load balancer or API attached.
+- **rule:** Nothing public bypasses the WAF (baseline: origin locked).
+  **probe:** internet-facing load balancers `aws elbv2 describe-load-balancers --query "LoadBalancers[?Scheme=='internet-facing'].[LoadBalancerName,DNSName]" --output text`;
+  each is in a web ACL above, or only accepts CloudFront (security group allows the
+  `com.amazonaws.global.cloudfront.origin-facing` prefix list only).
+- **rule:** DDoS protection fits the risk: Shield Standard is automatic; Shield Advanced for business-critical public
+  apps (baseline: DDoS limits).
+  **probe:** `aws shield describe-subscription` (an error means Standard only) and
+  `aws shield list-protections --query 'Protections[].[Name,ResourceArn]'`.
+- **rule:** TLS 1.2+ on every listener and distribution (baseline: TLS).
+  **probe:** `aws elbv2 describe-listeners --load-balancer-arn <lb-arn> --query 'Listeners[].[Port,Protocol,SslPolicy]'`
+  shows a TLS 1.2+ policy (for example `ELBSecurityPolicy-TLS13-1-2-2021-06`);
+  `aws cloudfront list-distributions --query 'DistributionList.Items[].[Id,WebACLId,ViewerCertificate.MinimumProtocolVersion]'`
+  shows a web ACL and `TLSv1.2_2021`.
+- **rule:** Admin access through Session Manager, not open SSH or RDP (baseline: admin access never public).
+  **probe:** `aws ssm describe-instance-information --query 'InstanceInformationList[].[InstanceId,PingStatus]'`
+  lists the instances; the security-group probe in Networking shows no 22 or 3389 open to the world.
+- **rule:** Threat detection is on and read (baseline: detection).
+  **probe:** `aws guardduty list-detectors` returns a detector;
+  `aws guardduty list-findings --detector-id <detector-id> --finding-criteria '{"Criterion":{"severity":{"Gte":7}}}'`
+  has none unreviewed; `aws securityhub get-findings --filters '{"SeverityLabel":[{"Value":"CRITICAL","Comparison":"EQUALS"}],"RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}]}' --max-items 20`.
+- **rule:** Vulnerabilities in instances, images and functions are found (baseline: vulnerability scanning).
+  **probe:** `aws inspector2 list-findings --filter-criteria '{"severity":[{"comparison":"EQUALS","value":"CRITICAL"}]}' --max-results 20`
+  and `aws ecr describe-image-scan-findings --repository-name <repo> --image-id imageTag=<tag> --query 'imageScanFindings.findingSeverityCounts'`.
+
 ## Backup and DR
 
 - **rule:** AWS Backup plans cover every stateful store (baseline: automated backups).

@@ -94,6 +94,32 @@ Before any probe, confirm which account and project you are using, and say it in
 - **rule:** Public endpoints have an uptime check (baseline: uptime probe from outside).
   **probe:** `gcloud monitoring uptime list-configs --project=<project>`.
 
+## Security and attack surface
+
+- **rule:** Public apps sit behind Cloud Armor with preconfigured WAF rules (SQL injection, XSS), rate limiting and
+  bot management, and Adaptive Protection on (baseline: WAF, injection, bots, rate limits).
+  **probe:** `gcloud compute security-policies list --project=<project>`;
+  `gcloud compute security-policies describe <policy> --project=<project> --format="yaml(rules[].match.expr,rules[].action,adaptiveProtectionConfig)"`
+  shows `evaluatePreconfiguredWaf('sqli-...')`-style rules, a `rate_based_ban` or `throttle` rule, and adaptive
+  protection enabled.
+- **rule:** Every public backend has a security policy, and nothing bypasses the load balancer (baseline: origin
+  locked).
+  **probe:** `gcloud compute backend-services list --project=<project> --format="table(name,securityPolicy)"` has no
+  empty `securityPolicy`; VMs have no external IPs unless needed:
+  `gcloud compute instances list --project=<project> --format="table(name,networkInterfaces[].accessConfigs[].natIP)"`.
+- **rule:** TLS 1.2+ with a modern SSL policy (baseline: TLS).
+  **probe:** `gcloud compute ssl-policies list --project=<project> --format="table(name,minTlsVersion,profile)"`
+  shows `TLS_1_2` and the policy is attached to each HTTPS proxy
+  (`gcloud compute target-https-proxies list --project=<project> --format="table(name,sslPolicy)"`).
+- **rule:** Admin access through IAP TCP forwarding or OS Login, not open SSH or RDP (baseline: admin access never
+  public).
+  **probe:** the firewall probe in Networking shows no 22 or 3389 from `0.0.0.0/0`; an IAP rule allows
+  `35.235.240.0/20` instead.
+- **rule:** Security Command Center is on and read (baseline: detection and vulnerability scanning).
+  **probe:** `gcloud scc findings list projects/<project> --filter="state=\"ACTIVE\" AND severity=\"CRITICAL\""`
+  has owners for every finding; container image vulnerabilities via
+  `gcloud artifacts docker images describe <image> --show-package-vulnerability`.
+
 ## Backup and DR
 
 - **rule:** Databases and disks have automated backups (baseline: automated backups).

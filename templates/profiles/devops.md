@@ -20,7 +20,8 @@ truth-source: the live environment (provider APIs, real network paths, the state
   hidden; a backup that exists but was never restored; verified in dev, claimed for prod; a console change that never
   made it into code.
 - **audit lenses:** run each as its own pass, then compare. **Wiring:** does it work from the consumer's position
-  (reachable, resolvable, allowed)? **Security:** exposure, identities and least privilege, secrets. **Reliability:**
+  (reachable, resolvable, allowed)? **Security:** the attack surface, judged against today's automated attacks (rules
+  and probes in `devops/baseline.md`, Security and attack surface; see "Security findings" below). **Reliability:**
   single points of failure, backups restore-tested, failover. **Drift:** code vs state vs live resource. **Cost:**
   over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing model, storage
   tier, idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every cost finding
@@ -31,6 +32,42 @@ truth-source: the live environment (provider APIs, real network paths, the state
   something; a `kubectl`/`helm` write; a playbook run; a change made over SSH. Infrastructure has no `git reset`. A
   deleted database, a replaced disk or a wrong firewall rule can't be undone by reverting code. So propose first and
   wait for a clear yes, every time, even under standing-proceed. A yes covers only the commands it was given for.
+
+## Security findings
+
+Automated attacks are cheap now: bots scan every public address within minutes, credential stuffing and DDoS are
+rented by the hour, and AI writes working exploits fast. Treat every public endpoint as under attack today. In every
+audit, check the attack surface (exposure, DDoS and rate limits, bots, injection, identities, secrets, patching,
+detection) and write each security finding so a non-expert can act on it:
+- **Risk:** what an attacker could do, in one plain sentence ("anyone on the internet can try passwords against the
+  database").
+- **How likely:** is it exposed to the internet, is it a known, scanned-for weakness, is it already being probed
+  (check the logs).
+- **Impact:** what happens to data, money, users or uptime if it's used.
+- **Fix:** the change that closes it, and what it costs or breaks.
+- **Evidence:** the probe output that shows the gap.
+Rank by likely impact, worst first. Never call something "secure"; say which checks passed and what was not checked.
+
+## Secrets
+
+- Credentials (passwords, tokens, API keys, private keys) go in a `.secret` file (or a `.secret/` folder) at the repo
+  root: listed in `.gitignore`, mode `600`, loaded by the tooling (for example `set -a; . ./.secret; set +a` or a
+  Makefile `-include .secret`). Never in code, `*.tfvars`, state outputs, CI logs or chat. Shared or production
+  secrets belong in the platform's secret manager; `.secret` holds the local copy a tool needs.
+- **Never read** `.secret`, `.env` or credential files, and never run a command that prints a secret value. The guard
+  denies both. To change a value, write it without reading the file (append a line, or `sed -i` a known key), or ask
+  the user to do it. Use secrets by reference (environment variables, secret-manager lookups), never by echoing them.
+- Probe: `git check-ignore .secret .env` lists both; `stat -c '%a' .secret` (Linux) or `stat -f '%Lp' .secret`
+  (macOS) prints `600`; `gitleaks detect` finds nothing in the repo or its history.
+
+## Running scripts and make targets
+
+Assess the risk before running anything that wraps other commands (a script, a `make` target, inline code):
+- Read it first. The guard also reads it: it follows `make` targets, their prerequisites and recursive `make` calls,
+  scripts (shell, Python, Node, Ruby, Perl) and inline code, a few levels deep.
+- **Harmless** (it only reads, builds, tests, plans or prints non-secret output): run it.
+- **Risky** (it changes infrastructure, deletes or overwrites data, or touches secrets): don't run it yet. Tell the
+  user, in plain words, why it needs to run, what it will change, what could go wrong, and what it fixes. Then ask.
 
 ## Investigate before you change
 
@@ -112,6 +149,8 @@ match: \b(systemctl\s+(start|stop|restart|reload|enable|disable|mask)|reboot|shu
 match: \b(qm|pct)\s+(start|stop|shutdown|reboot|destroy|rollback|snapshot|delsnapshot|migrate|set|resize|create|restore)\b|\bha-manager\s+(set|add|remove|migrate|relocate)\b
 match: \bgovc\s+(vm\.(power|destroy|create|change|clone|migrate)|snapshot\.(create|remove|revert))\b|\bvirsh\s+(start|shutdown|reboot|destroy|undefine|setvcpus|setmem|snapshot-(create|delete|revert))\b
 match: \brestic\s+(.*\s)?(forget|prune|restore|unlock)\b|\bborg\s+(.*\s)?(delete|prune|compact|extract)\b
+match: \.(create|delete|update|put|modify|terminate|start|stop|reboot|restore|attach|detach|associate|disassociate|run|invoke|rotate|purge|import)_[a-z0-9_]+\(|\bbegin_(create|delete|update|start|stop|restart|deallocate)[a-z_]*\(
+match: \bcurl\b.*--aws-sigv4|\b(az\s+rest|gcloud\s+.*--impersonate)\b.*--method\s+(put|post|patch|delete)\b
 - Before running it, did you show the user what you found, the fix, the risks and how to undo it, in plain words,
   and get a clear yes for these exact commands?
 - Which environment and account/subscription/project did this run against? Did you check the workspace, backend and
@@ -127,6 +166,21 @@ match: \brestic\s+(.*\s)?(forget|prune|restore|unlock)\b|\bborg\s+(.*\s)?(delete
 - What is the rollback, and has it been tried?
 - What does this change in the monthly bill? Is there a cheaper option with the same performance, and did you say so?
 - Is your reply in plain words someone without infra experience can follow, with every risk stated plainly?
+
+### gate: secrets
+files: (^|/)\.secrets?(/|$)|\.secret$
+files: (^|/)\.env(\.(?!example$|sample$|template$)[^/]+)?$
+files: (^|/)\.aws/(credentials|sso/cache/|cli/cache/)|(^|/)\.azure/(msal_token_cache|accessTokens|service_principal_entries)
+files: (^|/)\.config/gcloud/(credentials\.db|access_tokens\.db|legacy_credentials/|application_default_credentials\.json)
+files: (^|/)\.config/doctl/config\.yaml$|(^|/)\.kube/config$|(^|/)\.ssh/id_[^/]*$|\.(pem|key|p12|pfx|jks|keystore)$
+files: (^|/)(terraform\.tfstate(\.backup)?|[^/]*\.tfstate)$
+match: \baws\s+secretsmanager\s+get-secret-value\b|\baws\s+ssm\s+get-parameters?(-by-path)?\b.*--with-decryption|\baws\s+(sso\s+get-role-credentials|configure\s+(get|export-credentials)|sts\s+get-session-token|ecr\s+get-login-password|iam\s+create-access-key)\b
+match: \baz\s+(keyvault\s+secret\s+(show|download)|account\s+get-access-token|storage\s+account\s+(keys\s+list|show-connection-string)|ad\s+sp\s+credential\s+reset)\b|\baz\s+.*\blist-(keys|credentials|connection-strings)\b
+match: \bgcloud\s+(secrets\s+versions\s+access|auth\s+(print-access-token|print-identity-token|application-default\s+print-access-token)|iam\s+service-accounts\s+keys\s+create)\b
+match: \bdoctl\s+(auth\s+token|kubernetes\s+cluster\s+kubeconfig\s+show|databases\s+(connection|user\s+get))\b
+match: \bkubectl\s+get\s+secrets?\b.*(-o|--output)[\s=]*(yaml|json|jsonpath|go-template)|\bkubectl\s+config\s+view\b.*--raw
+match: \b(terraform|tofu)\s+((output|show)\s+[^|]*-json(?![^|]*\|)|output\s+[^|]*-raw|state\s+pull(?![^|]*\|))
+match: (^|[;&|]\s*)(printenv|env|set|export\s+-p|declare\s+-x)\s*($|[;&|])
 
 ### gate: investigation
 claims: root cause|the cause (is|was)|caused by|the (issue|problem) (is|was)|it'?s because|that'?s why|explains (it|the)

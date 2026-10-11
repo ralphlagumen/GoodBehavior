@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    target = os.path.abspath(args.target)
+    target = os.path.abspath(os.path.expanduser(args.target))
     manifest_path = os.path.join(target, ".claude", "goodbehavior", "manifest.json")
     if not os.path.isfile(manifest_path):
         print(json.dumps({"status": "no manifest — run /adopt-goodbehavior first"}))
@@ -68,7 +68,7 @@ def main():
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    source = os.path.abspath(args.source or manifest["source"])
+    source = os.path.abspath(os.path.expanduser(args.source or manifest["source"]))
     if not os.path.isdir(os.path.join(source, ".git")):
         print(json.dumps({"status": f"source is not a git repo: {source}"}))
         return 1

@@ -83,7 +83,8 @@ def main():
         check("Stop hook wired exactly once", wired == 1)
         pre = settings["hooks"].get("PreToolUse", [])
         guard = [e for e in pre for h in e.get("hooks", []) if "done-gate" in h.get("command", "")]
-        check("PreToolUse guard wired exactly once, on Bash", len(guard) == 1 and guard[0].get("matcher") == "Bash")
+        check("PreToolUse guard wired exactly once, on Bash|Read|Grep",
+              len(guard) == 1 and guard[0].get("matcher") == "Bash|Read|Grep")
 
         # idempotency: re-run must create nothing new and not double-wire
         report2 = run_install(plan_path)
