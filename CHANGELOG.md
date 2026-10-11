@@ -3,6 +3,17 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops baseline guide
+
+- `templates/profiles/devops/baseline.md`: cross-cloud DevOps rules in seven areas (IaC and state, CI/CD, secrets and
+  identity, networking, observability, backup/DR, cost). Every rule is paired with a live probe. Probes are read-only
+  by default; ones that change state (restore, failover, rotation, a deliberate denied write) are marked pause points.
+  Backups count only once restored into a scratch target.
+- `devops.md` lists its guides. `adopt-goodbehavior` asks which platforms are in use and installs the matched guides as
+  `<profile>/<guide>` entries (e.g. `devops/baseline`). `install.py` already handled the nested path; no code change.
+- `test_lint.py`: every guide rule must carry a probe; the invariant layer must not name a cloud provider.
+  `test_install.py`: a nested guide installs byte-identical and the manifest records its source path.
+
 ## 2026-10-11 — devops profile
 
 - `templates/profiles/devops.md`: a fifth core profile for infrastructure work, cloud or on-prem (IaC, Kubernetes,

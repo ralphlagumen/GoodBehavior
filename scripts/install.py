@@ -15,7 +15,8 @@ Plan format (written by the adopt skill after the user confirms):
   "source": "/abs/path/to/GoodBehavior",
   "target": "/abs/path/to/project",
   "skills":   ["audit-goodbehavior", "verify-goodbehavior", ...],   # skill DIR names to copy
-  "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five
+  "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five;
+                                             # guides go as "<profile>/<guide>", e.g. "devops/baseline"
   "hook": true,                              # install done-gate.py + wire the Stop hook
   "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", ... }   # target-rel -> source-rel
 }

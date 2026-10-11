@@ -26,3 +26,8 @@ truth-source: the live environment (provider APIs, real network paths, the state
 > Provider and workflow facets are confirmed during adoption: which clouds/on-prem platforms, the IaC tool and where
 > its state lives, the environment ladder (dev → staging → prod), how credentials are obtained, and what "non-prod"
 > means in this project.
+
+**Guides** (in `devops/` next to this file; install only the ones that match): `baseline` has the cross-cloud rules,
+each paired with its live probe (IaC and state, CI/CD, secrets and identity, networking, observability, backup/DR,
+cost). It always comes with this profile. Then add one provider guide per platform in use. Each maps the baseline rules
+to that platform's services and CLI probes.

@@ -41,7 +41,11 @@ Then resolve the **profile** from `<source>/templates/profiles/`:
 3. **Compose slots.** A profile is not a rigid single label; take slots (`the-real-thing` / `verify` / `evidence`) from
    different profiles when the project straddles. Canonical case: a **data pipeline** → build ← `development`, verify ←
    `analysis`, evidence ← `analysis`. State the resolved slots explicitly.
-4. **Custom fallback — never decline.** If nothing fits, elicit the three slots directly from the user ("what's the real
+4. **Profile guides.** If a resolved profile has a guide folder next to it (today: `devops/`), its body names the
+   guides. Ask which platforms the project runs on, then add the always-on guide plus one per platform in use, as
+   `<profile>/<guide>` entries in the plan's `profiles` list (e.g. `"devops"`, `"devops/baseline"`, plus the platform
+   guide). Read only those guide files. A platform with no guide gets the baseline only; say so in the proposal.
+5. **Custom fallback — never decline.** If nothing fits, elicit the three slots directly from the user ("what's the real
    thing, how would you check it's right, what counts as proof?") and write a custom profile. adopt must never say the
    method "isn't for this project."
 
@@ -104,7 +108,7 @@ manifest); you do only the **judgment steps** the script can't.
      "source": "<abs source path>", "target": "<abs target path>",
      "skills":   ["audit-goodbehavior", "roadmap-goodbehavior", "gate-build-goodbehavior",
                   "verify-goodbehavior", "uatplan-goodbehavior", "learn-goodbehavior", "update-goodbehavior"],
-     "profiles": ["<only the matched profile(s) — never all five>"],
+     "profiles": ["<only the matched profile(s) — never all five>", "<plus matched guides, e.g. devops/baseline>"],
      "hook": true,
      "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", "...": "per the confirmed planning/memory choices" }
    }

@@ -90,6 +90,20 @@ def main():
         wired2 = sum(1 for e in stops2 for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
         check("re-run does not double-wire the hook", wired2 == 1)
 
+    # profile guides: a nested <profile>/<guide> entry lands under profiles/, tracked with its source path
+    with tempfile.TemporaryDirectory() as target:
+        plan_path = os.path.join(target, "plan.json")
+        with open(plan_path, "w") as f:
+            json.dump({"source": ROOT, "target": target, "skills": [],
+                       "profiles": ["devops", "devops/baseline"], "hook": False, "templates": {}}, f)
+        run_install(plan_path)
+        guide = os.path.join(target, ".claude/goodbehavior/profiles/devops/baseline.md")
+        check("guide copied byte-identical",
+              os.path.isfile(guide) and sha256(guide) == sha256(os.path.join(ROOT, "templates/profiles/devops/baseline.md")))
+        with open(os.path.join(target, ".claude/goodbehavior/manifest.json")) as f:
+            entry = json.load(f)["files"].get(".claude/goodbehavior/profiles/devops/baseline.md", {})
+        check("manifest tracks the guide's source path", entry.get("from") == "templates/profiles/devops/baseline.md")
+
     print(f"test_install: {'FAILED: ' + '; '.join(failures) if failures else 'all passed'}")
     return 1 if failures else 0
 
