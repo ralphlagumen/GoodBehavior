@@ -83,8 +83,7 @@ def main():
         check("Stop hook wired exactly once", wired == 1)
         pre = settings["hooks"].get("PreToolUse", [])
         guard = [e for e in pre for h in e.get("hooks", []) if "done-gate" in h.get("command", "")]
-        check("PreToolUse guard wired exactly once, on every tool",
-              len(guard) == 1 and guard[0].get("matcher") == "*")
+        check("no PreToolUse wiring for profiles without a guard (analysis, development)", not guard)
 
         # idempotency: re-run must create nothing new and not double-wire
         report2 = run_install(plan_path)
@@ -94,8 +93,9 @@ def main():
         wired2 = sum(1 for e in stops2 for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
         check("re-run does not double-wire the hook", wired2 == 1)
         with open(os.path.join(target, ".claude", "settings.json")) as f:
-            pre2 = json.load(f)["hooks"]["PreToolUse"]
-        check("re-run does not double-wire the guard", len(pre2) == 1)
+            pre2 = json.load(f)["hooks"].get("PreToolUse", [])
+        check("re-run adds no PreToolUse wiring", not [e for e in pre2 for h in e.get("hooks", [])
+                                                       if "done-gate" in h.get("command", "")])
 
     # profile guides: a nested <profile>/<guide> entry lands under profiles/, tracked with its source path
     with tempfile.TemporaryDirectory() as target:
@@ -111,6 +111,16 @@ def main():
             entry = json.load(f)["files"].get(".claude/goodbehavior/profiles/devops/baseline.md", {})
         check("manifest tracks the guide's source path", entry.get("from") == "templates/profiles/devops/baseline.md")
         g = os.path.join(target, ".claude/goodbehavior/profiles/devops/guard.py")
+        plan_hook = {"source": ROOT, "target": target, "skills": [], "profiles": ["devops", "devops/guard.py"],
+                     "hook": True, "templates": {}}
+        with open(plan_path, "w") as f:
+            json.dump(plan_hook, f)
+        run_install(plan_path)
+        run_install(plan_path)  # re-run must not double-wire
+        with open(os.path.join(target, ".claude", "settings.json")) as f:
+            pre = json.load(f)["hooks"].get("PreToolUse", [])
+        wired = [e for e in pre for h in e.get("hooks", []) if "done-gate" in h.get("command", "")]
+        check("devops: PreToolUse guard wired exactly once, on every tool", len(wired) == 1 and wired[0].get("matcher") == "*")
         check("guard.py installed as-is (no .md added)",
               os.path.isfile(g) and sha256(g) == sha256(os.path.join(ROOT, "templates/profiles/devops/guard.py")))
 

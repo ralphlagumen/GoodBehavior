@@ -17,7 +17,8 @@ Plan format (written by the adopt skill after the user confirms):
   "skills":   ["audit-goodbehavior", "verify-goodbehavior", ...],   # skill DIR names to copy
   "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five;
                                              # guides go as "<profile>/<guide>", e.g. "devops/baseline"
-  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(*)
+  "hook": true,                              # install done-gate.py + wire Stop (and PreToolUse(*) for a
+                                             # profile with a guard, e.g. devops)
   "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", ... }   # target-rel -> source-rel
 }
 
@@ -79,9 +80,27 @@ def plan_files(plan):
         yield HOOK_REL, HOOK_REL
 
 
-def wire_settings(target, dry_run, report):
-    """Merge the hook wiring (Stop, PreToolUse on every tool) into <target>/.claude/settings.json without
-    touching anything else. Each event is wired once; an existing done-gate entry is left alone."""
+def needs_guard(plan):
+    """True when a planned profile ships a guard (guard.py) or gate rules (a "### gate:" section). Only those
+    profiles (today: devops) get the PreToolUse wiring; the others get the Stop hook alone."""
+    for profile in plan.get("profiles", []):
+        name = profile if os.path.splitext(profile)[1] else f"{profile}.md"
+        path = os.path.join(plan["source"], "templates", "profiles", name)
+        if name.endswith("guard.py"):
+            return True
+        try:
+            with open(path, encoding="utf-8") as f:
+                if "### gate:" in f.read():
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def wire_settings(target, dry_run, report, guard=True):
+    """Merge the hook wiring into <target>/.claude/settings.json without touching anything else: Stop always,
+    PreToolUse on every tool only when `guard` (a planned profile ships a guard). Each event is wired once; an
+    existing done-gate entry is left alone."""
     path = os.path.join(target, ".claude", "settings.json")
     settings = {}
     if os.path.isfile(path):
@@ -92,7 +111,7 @@ def wire_settings(target, dry_run, report):
             report["warnings"].append(f"settings.json exists but is not valid JSON — left untouched: {path}")
             return
     added = []
-    for event, matcher in (("Stop", None), ("PreToolUse", "*")):
+    for event, matcher in (("Stop", None), ("PreToolUse", "*"))[: 2 if guard else 1]:
         entries = settings.setdefault("hooks", {}).setdefault(event, [])
         if any("done-gate.py" in h.get("command", "") for e in entries for h in e.get("hooks", [])):
             report["skipped"].append(f".claude/settings.json ({event} hook already wired)")
@@ -163,7 +182,7 @@ def main():
         report["created"].append(tgt_rel)
 
     if plan.get("hook"):
-        wire_settings(target, args.dry_run, report)
+        wire_settings(target, args.dry_run, report, guard=needs_guard(plan))
 
     if not args.dry_run:
         os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
