@@ -541,6 +541,8 @@ PROJECT_CASES = [
     ("helm list -A", "allow"), ("helm -n prod uninstall app", "ask"),
     ("KUBECONFIG=files/kubeconfig kubectl get pods -A", "allow"), ("kubectl --kubeconfig files/kubeconfig get ns", "allow"),
     ("export KUBECONFIG=$PWD/files/kubeconfig", "allow"), ("cat files/kubeconfig", "deny"),
+    ("cat files/.kubeconfig/cluster-prod-kubeconfig.yaml", "deny"), ("cat files/.kubeconfig/prod.yaml", "deny"),
+    ("kubectl --kubeconfig files/.kubeconfig/prod.yaml get pods", "allow"), ("cat my-kubeconfig.yaml", "deny"),
     ("kubectl --kubeconfig files/kubeconfig config view --raw", "deny"), ("git check-ignore files/kubeconfig", "allow"),
     ("kubectl apply --dry-run=server -f cm.yaml", "allow"), ("kubectl run x --image=busybox --dry-run=server -n ns", "allow"),
     ("kubectl apply --dry-run=none -f cm.yaml", "ask"), ("kubectl diff -f cm.yaml", "allow"),

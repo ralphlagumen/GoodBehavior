@@ -20,12 +20,14 @@ current one.
 
 ## Access
 
-- **rule:** Keep the project's kubeconfig at `files/kubeconfig` in the project folder, holding only this project's
-  cluster(s), and list `files/kubeconfig` in `.gitignore`. Point every command at it (`export
+- **rule:** Keep the project's kubeconfig at `files/kubeconfig` in the project folder (or, for several clusters, one
+  file per cluster in a `files/.kubeconfig/` folder), holding only this project's clusters, and list it in
+  `.gitignore`. Point every command at it (`export
   KUBECONFIG=$PWD/files/kubeconfig`, or `--kubeconfig files/kubeconfig`), so nothing can reach a cluster from another
   project, such as a production context in `~/.kube/config`. Never print it: it holds cluster credentials.
   **probe:** `git check-ignore files/kubeconfig` prints the path; `stat -f '%Lp' files/kubeconfig` (macOS) or
-  `stat -c '%a' files/kubeconfig` (Linux) prints `600`;
+  `stat -c '%a' files/kubeconfig` (Linux) prints `600` (for a folder, `ls -l files/.kubeconfig/` shows `-rw-------`
+  on every file);
   `KUBECONFIG=files/kubeconfig kubectl config get-contexts -o name` lists only this project's clusters.
 
 ## Cluster and upgrades

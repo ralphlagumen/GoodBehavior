@@ -77,12 +77,13 @@ SECRET_PARTS = (
     "/.config/gcloud/credentials.db", "/.config/gcloud/access_tokens.db", "/.config/gcloud/legacy_credentials",
     "/.config/gcloud/application_default_credentials.json", "/.azure/msal_token_cache",
     "/.azure/accessTokens", "/.azure/service_principal_entries", "/.config/doctl/config.yaml", "/.kube/config",
-    "/.config/gh/hosts", "/.terraform.d/credentials", "/.secret/", "/.secrets/",
+    "/.config/gh/hosts", "/.terraform.d/credentials", "/.secret/", "/.secrets/", "/.kubeconfig/",
 )
 SECRET_BASENAMES = {".secret", ".secrets", ".netrc", ".pgpass", ".git-credentials", ".npmrc", ".pypirc",
                     ".envrc", "credentials.json", "service-account.json", "environ", "kubeconfig"}
 SECRET_PATTERNS = re.compile(r"^(\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?|.*\.tfstate(\.backup)?|"
-                             r".*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|.*\.secret)$")
+                             r".*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|.*\.secret|"
+                             r".*kubeconfig.*)$")
 
 
 def project_dir(payload):

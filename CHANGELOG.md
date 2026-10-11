@@ -43,7 +43,7 @@ and a guard that lets investigation run but stops changes and secret leaks.
 - **Runs:** reads, plans, tests, scans, dry runs, local git and docker, SSM and ssh tunnels, ssh commands that only
   read. **Asks:** anything that changes something or can't be shown safe, including edits to `.claude/`. **Denies:**
   anything that would show a secret (credential files, `.env`/`.secret`, secret-manager and token commands, state
-  dumps, `files/kubeconfig`).
+  dumps, kubeconfigs: `files/kubeconfig`, anything in a `.kubeconfig/` folder or named `*kubeconfig*`).
 - Fails closed on a crash; turns every ask into a deny when permissions are bypassed (Claude Code was seen skipping
   a hook's ask for Edit in that mode); logs every ask and deny to `.claude/goodbehavior/guard.log`.
 - Without `guard.py`, `done-gate.py` falls back to a simpler text-matching guard built from the profile's gate
