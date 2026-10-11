@@ -70,10 +70,18 @@ every devops audit also runs three checklist batches of its own, after the area 
 2. **Run the broad scanners too**, because a checklist only covers what it lists. All are read-only:
    - Code: `gitleaks`, `trivy config`, `checkov`, `tflint`, `shellcheck`, `zizmor`/`actionlint`, `jscpd` (commands in
      `devops/baseline.md`, Code).
-   - Cloud account: Prowler for AWS, Azure and GCP (`devops/aws.md`), or the provider's own security standard.
+   - Cloud account: Prowler for AWS, GCP and Azure (`devops/aws.md`, `devops/gcp.md`, `devops/azure.md`), or the
+     provider's own security standard.
    - Clusters: `trivy k8s`, `kubescape` or Prowler (`devops/kubernetes.md`).
    - Images in use: `trivy image`.
-   A scanner that isn't installed is a **not checked** row with the install command, never a silent skip.
+   **A scanner that isn't installed: ask the user before installing it**, then run it. Check first
+   (`command -v <tool>`), list every missing tool in one question (AskUserQuestion), and say for each: what it
+   checks, that it only reads, the exact install command (`brew install gitleaks actionlint zizmor kubescape`,
+   `go install github.com/terraform-linters/tflint@v0.58.1` (tflint is not in Homebrew),
+   `pipx install --python python3.12 prowler` (Prowler fails on Python 3.14);
+   `npx -y jscpd@4.0.5` downloads on each run) and where it installs. Offer "Yes, install all", "Pick which" and "No".
+   Install only what the user said yes to. A tool the user declined is a **not checked** row with its install
+   command, never a silent skip, and never a pass.
 3. **Cost uses real numbers.** Read the last full month's bill by service (Cost Explorer, `doctl invoice list`, the
    portal) and 14–30 days of usage per resource. End the cost batch with a savings table, biggest first: item, now,
    change, saving per month, risk. If the bill can't be read, say so at the top: every price is then an estimate.

@@ -119,6 +119,11 @@ Before any probe, confirm which tenant and subscription you are in, and say it i
   never public).
   **probe:** `az resource list --resource-type Microsoft.Network/bastionHosts --query "[].name"`; the NSG probe in Networking shows no 22 or 3389 open to
   the internet.
+- **rule:** The whole subscription is scanned against a standard, not only the services this guide names
+  (baseline: know the whole attack surface).
+  **probe:** Prowler (open source, read-only API calls; tested with 5.44), signed in with az login:
+  `prowler azure --az-cli-auth --subscription-ids <subscription-id> --severity critical high --output-formats csv html`,
+  and for card data add `--compliance pci_4.0_azure`. Every FAIL is a finding or has a written reason.
 - **rule:** Microsoft Defender for Cloud is on and read (baseline: detection and vulnerability scanning).
   **probe:** `az security pricing list --query "value[].{plan:name,tier:pricingTier}" -o table` shows `Standard` for
   servers, containers, databases and storage in use; `az security alert list --query "[?status=='Active'].{alert:alertDisplayName,severity:severity}" -o table`

@@ -22,7 +22,9 @@ and a guard that lets investigation run but stops changes and secret leaks.
   fix, evidence), reliability, drift, cost, code. A cluster with no secrets manager gets an OpenBao suggestion.
 - Audit coverage: every devops audit ends with security, cost and code checklist batches. A command builds one row
   per guide rule; each row is pass, finding, not checked (with why) or n/a. Broad read-only scanners run too
-  (gitleaks over git history, trivy, checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape). Cost
+  (gitleaks over git history, trivy, checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape).
+  A missing scanner is installed only after the user says yes in one question that lists each tool, what it
+  checks and its install command; a declined tool stays a "not checked" row. Cost
   reads the real bill and ends with a savings table. Each batch opens with a plain verdict with counts, and the final
   report always covers security, cost and code.
 - Done-gate questions for changes (environment, every destroy/replace, saved plan, no-change re-plan, consent) and
@@ -34,8 +36,9 @@ and a guard that lets investigation run but stops changes and secret leaks.
   backup/DR (restore-tested), cost.
 - Tools: `terraform`, `shell`, `kubernetes` (kubeconfig at gitignored `files/kubeconfig`, cluster attack surface,
   OpenBao), `helm`. Platforms: `aws`, `azure`, `gcp`, `digitalocean`, `onprem`.
-- `aws` also checks IMDSv2, default disk encryption and a whole-account Prowler scan; `kubernetes` adds Prowler as
-  a cluster scanner.
+- `aws` also checks IMDSv2, default disk encryption and a whole-account Prowler scan; `gcp` checks OS Login,
+  Shielded VM and a whole-project Prowler scan; `azure` adds a whole-subscription Prowler scan; `kubernetes` adds
+  Prowler as a cluster scanner.
 - Corrections to common advice, each tested: S3 state locking uses `use_lockfile` (`dynamodb_table` is deprecated);
   `set -e` alone misses pipeline failures and unset variables; never clean up with `rm -rf /tmp/*`;
   `openssl s_client -tls1_1` needs `-cipher 'DEFAULT@SECLEVEL=0'` on OpenSSL 3+; Pod Security `enforce` rejects Pods

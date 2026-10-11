@@ -115,6 +115,18 @@ Before any probe, confirm which account and project you are using, and say it in
   public).
   **probe:** the firewall probe in Networking shows no 22 or 3389 from `0.0.0.0/0`; an IAP rule allows
   `35.235.240.0/20` instead.
+- **rule:** VMs use OS Login and Shielded VM, so SSH keys aren't scattered in metadata and boot tampering is caught
+  (baseline: admin access never public, SSO with MFA).
+  **probe:** `gcloud compute project-info describe --project=<project> --format="yaml(commonInstanceMetadata.items)"`
+  shows `key: enable-oslogin` with `value: 'TRUE'`;
+  `gcloud compute instances list --project=<project> --format="table(name,shieldedInstanceConfig.enableSecureBoot,shieldedInstanceConfig.enableVtpm,shieldedInstanceConfig.enableIntegrityMonitoring)"`
+  shows `True` for each.
+- **rule:** The whole project is scanned against a standard, not only the services this guide names (baseline: know
+  the whole attack surface).
+  **probe:** Prowler (open source, read-only API calls; tested with 5.44), signed in with
+  application-default credentials (gcloud auth application-default login):
+  `prowler gcp --project-id <project> --severity critical high --output-formats csv html`, and for card data add
+  `--compliance pci_4.0_gcp`. Every FAIL is a finding or has a written reason.
 - **rule:** Security Command Center is on and read (baseline: detection and vulnerability scanning).
   **probe:** `gcloud scc findings list projects/<project> --filter="state=\"ACTIVE\" AND severity=\"CRITICAL\""`
   has owners for every finding; container image vulnerabilities via
