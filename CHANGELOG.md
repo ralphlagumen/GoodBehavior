@@ -3,101 +3,49 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
-## 2026-10-12 — devops profile: guides, guard, security and cost
+## 2026-10-12 — devops profile: guides, guard, security, cost and code audits
 
-A fifth core profile for infrastructure work, cloud or on-prem, with guides that pair every rule with a live probe
-and a guard that lets investigation run but stops changes and secret leaks.
+A fifth core profile for infrastructure work, cloud or on-prem. Guides pair every rule with a live probe; a guard
+lets investigation run but stops changes and secret leaks.
 
 **Profile** (`templates/profiles/devops.md`)
-- The real thing is the live environment read back from the provider; verify by applying to non-prod (with the
-  user's yes), probing from the consumer's position, and re-planning for no changes; evidence names the environment
-  and account.
-- Every infrastructure change, in any environment, waits for the user's yes. Before asking: what was found, the exact
-  change, why it fixes it, what could break, how to undo it, where it runs, and what it does to the bill. Investigate
-  read-only first. Talk in plain words to someone who isn't an infra expert.
-- Cost in every proposal (now, change, saving, performance and risk, way back); size from 14+ days of real use.
-- Secrets go in a gitignored `.secret` file (mode 600); `.env` and `.secret` are never read. Keeping `AWS_PROFILE`
-  and similar in `.env` is suggested, not required.
-- Audit lenses: wiring, security (judged against automated attacks; each finding states risk, how likely, impact,
-  fix, evidence), reliability, drift, cost, code. A cluster with no secrets manager gets an OpenBao suggestion.
-- Audit coverage: every devops audit ends with security, cost and code checklist batches. A command builds one row
-  per guide rule; each row is pass, finding, not checked (with why) or n/a. Broad read-only scanners run too
-  (gitleaks over git history, trivy, checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape).
-  A missing scanner is installed only after the user says yes in one question that lists each tool, what it
-  checks and its install command; a declined tool stays a "not checked" row.
-- Guard: the scanners (kubescape, Prowler, zizmor, jscpd) run as reads and may be handed a kubeconfig; flags that
-  fix, upload or print secrets still ask or deny. awk programs with `|` or `>` inside quotes or regexes now run. Cost
-  reads the real bill and ends with a savings table. Each batch opens with a plain verdict with counts, and the final
-  report always covers security, cost and code.
-- Done-gate questions for changes (environment, every destroy/replace, saved plan, no-change re-plan, consent) and
-  for investigations (observed vs inferred, live state, alternatives ruled out, propose don't apply).
+- Done = the live environment read back from the provider, probed from the consumer's position, re-planned with no
+  changes. Every infrastructure change, in any environment, waits for the user's yes, with what it does, what could
+  break, how to undo it and what it costs. Plain words for non-experts.
+- Secrets live in a gitignored `.secret` file; `.env` and `.secret` are never read.
+- Audits run six lenses (wiring, security, reliability, drift, cost, code), then three checklist batches (security,
+  cost, code): one row per guide rule (pass, finding, not checked, n/a), plus read-only scanners (gitleaks, trivy,
+  checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape). Missing scanners are installed only
+  after the user's yes. Cost reads the real bill and ends with a savings table. The report always covers security,
+  cost and code with counts.
 
-**Guides** (`templates/profiles/devops/`, installed only when they match: `"devops/<guide>"` in the install plan)
-- `baseline`: IaC and state, CI/CD, code (secrets in history, misconfigurations, lint, safe pipelines, copy-paste,
-  dead code), secrets and identity, networking, security and attack surface, observability,
-  backup/DR (restore-tested), cost.
-- Tools: `terraform`, `shell`, `kubernetes` (kubeconfig at gitignored `files/kubeconfig`, cluster attack surface,
-  OpenBao), `helm`. Platforms: `aws`, `azure`, `gcp`, `digitalocean`, `onprem`.
-- `aws` also checks IMDSv2, default disk encryption and a whole-account Prowler scan; `gcp` checks OS Login,
-  Shielded VM and a whole-project Prowler scan; `azure` adds a whole-subscription Prowler scan; `kubernetes` adds
-  Prowler as a cluster scanner.
-- Corrections to common advice, each tested: S3 state locking uses `use_lockfile` (`dynamodb_table` is deprecated);
-  `set -e` alone misses pipeline failures and unset variables; never clean up with `rm -rf /tmp/*`;
-  `openssl s_client -tls1_1` needs `-cipher 'DEFAULT@SECLEVEL=0'` on OpenSSL 3+; Pod Security `enforce` rejects Pods
-  but only warns about Deployments; an Azure VM that is "stopped" but not deallocated is still billed; a powered-off
-  DigitalOcean droplet is billed in full, and a managed database with no trusted sources is open to everyone.
+**Guides** (`templates/profiles/devops/`, installed per project as `"devops/<guide>"`)
+- `baseline` (IaC, CI/CD, code, secrets, networking, attack surface, observability, backup/DR, cost); tools
+  `terraform`, `shell`, `kubernetes`, `helm`; platforms `aws`, `azure`, `gcp`, `digitalocean`, `onprem`.
+- Tested corrections to common advice (S3 `use_lockfile`, `set -euo pipefail`, OpenSSL 3 TLS 1.1 probe, Pod Security
+  warn vs enforce, billed "stopped" VMs and droplets, open DigitalOcean databases).
 
-**Guard** (`templates/profiles/devops/guard.py`)
-- `done-gate.py` hands every tool call to it (PreToolUse, matcher `*`, wired only for devops). Other profiles
-  (development, analysis, research, creative) see no change: no PreToolUse wiring, the generic Stop-hook messages,
-  no guard log. It parses each command (quotes, variables,
-  `$(...)`, heredocs, pipes, `cd`) and reads what it would run: `make` recipes, scripts and their functions and
-  sourced files, package scripts, inline Python.
-- **Runs:** reads, plans, tests, scans, dry runs, local git and docker, SSM and ssh tunnels, ssh commands that only
-  read. **Asks:** anything that changes something or can't be shown safe, including edits to the guard's own files (`.claude/settings*.json`, `.claude/hooks/`, `.claude/goodbehavior/`,
-  `.claude/plugins/`, `.mcp.json`); Claude's memory and other `.claude/` files stay writable. **Denies:**
-  anything that would show a secret (credential files, `.env`/`.secret`, secret-manager and token commands, state
-  dumps, kubeconfigs: `files/kubeconfig`, anything in a `.kubeconfig/` folder or named `*kubeconfig*`).
-- Fails closed on a crash; turns every ask into a deny when permissions are bypassed (Claude Code was seen skipping
-  a hook's ask for Edit in that mode); logs every ask and deny to `.claude/goodbehavior/guard.log`.
-- **Run after a yes:** when the guard stops a command, its message gives a token (`[run:…]`). Claude asks with the
-  question picker (Yes, run it / No / Other), explaining what the command or script does and what could break; if
-  the user picks Yes, the guard finds that answer in the session transcript and lets the exact command run once.
-  The token covers the command and the contents of any script it runs, so editing the script voids the yes; a new
-  user message, or a second run, needs a new yes. Works in bypass mode, where a plain ask can't be shown. Session
-  transcripts are protected so an answer can't be forged; secrets stay denied.
-- Trusted commands: regexes in a project's `.claude/goodbehavior/guard-allow.txt` turn an ask into a run (never a
-  deny into a run). Test files (`bats`, `node`) are read before running; inside them, `PATH` mocks and arithmetic
-  are tolerated.
-- Investigation stays unblocked: `bash -n`/`sh -n` syntax checks, `kubectl port-forward`, parser-only Python
-  (`ast`, `tokenize`), `scutil --dns` and `sed -i` scripts containing backticks run; a Python script writing computed
-  paths asks only when the path comes from arguments, input or the environment, or the code mentions a protected
-  location.
-- Without `guard.py`, `done-gate.py` falls back to a simpler text-matching guard built from the profile's gate
-  sections.
+**Guard** (`templates/profiles/devops/guard.py`, wired as PreToolUse `*` for devops only)
+- Parses each command and what it runs (make recipes, scripts, shell functions, inline Python). **Runs:** reads, plans, tests,
+  scans, dry runs, tunnels, ssh and `kubectl exec` commands that only read. **Asks:** changes, installs, anything it
+  can't show safe, edits to its own files. **Denies:** anything that would show a secret. Fails closed; bypass mode
+  turns ask into deny; logs to `.claude/goodbehavior/guard.log`.
+- **Run after a yes:** a stopped command gets a token. Claude asks with the question picker, putting the token in the
+  call's hidden `metadata` (the user doesn't see it). A "Yes" lets that exact command run once; editing its script,
+  a new user message or a second run needs a new yes. Secrets stay denied.
+- Trusted commands: regexes in `.claude/goodbehavior/guard-allow.txt` turn an ask into a run, never a deny.
 
 **Install and update**
-- `install.py` accepts `devops/<guide>` and `devops/guard.py` profile entries, wires the Stop hook for every
-  profile and PreToolUse (`*`) only when a planned profile ships a guard or gate rules (today only devops), expands
-  `~` in paths and keeps `updatedAt` when adding files; `update.py` expands `~` too. `adopt` asks which
-  platforms and tools a project uses; `audit` points devops audits at the profile's lenses.
-- **`update.py` data-loss fix:** a file was treated as "untouched" when its sha256 matched the manifest, but after a
-  clean merge the manifest held the *merged* content's sha256, so the next update overwrote local edits with the
-  template. It now compares the local file with the upstream version it came from, and records only upstream
-  sha256s. Adopters need no manual repair: the comparison no longer relies on the recorded value.
-- **Existing adopters:** `/update-goodbehavior` updates files, not `settings.json`. Set the PreToolUse matcher for
-  `done-gate.py` to `*`, add `devops/guard.py` with the install script, and add `.claude/goodbehavior/guard.log`,
-  `.secret` and (for Kubernetes) `files/kubeconfig` to `.gitignore`.
+- `install.py` takes `devops/<guide>` and `devops/guard.py` and wires PreToolUse only for profiles with a guard.
+- `update.py` fix: after a clean merge it recorded the merged content as "untouched", so the next update overwrote
+  local edits. It now compares with the upstream version and records upstream hashes only.
+- Existing adopters: set the `done-gate.py` PreToolUse matcher to `*`, add `devops/guard.py`, and gitignore
+  `.claude/goodbehavior/guard.log`, `.secret` and `files/kubeconfig`.
 
-**Tests and verification**
-- `tests/test_guard.py` (538 guard decisions, including an adopter's hand-built bypass suite, identity-stripped),
-  `test_hook.py`, `test_install.py`, `test_lint.py` (every guide rule has a probe; the invariant layer stays
-  provider-neutral) and `test_guide_cli.py` (every cloud CLI command in the guides parses, offline; skipped when a
-  CLI isn't installed).
-- Probes were run or checked against: AWS CLI 2.36, Azure CLI 2.89, Google Cloud SDK 588, doctl 1.166, Terraform
-  1.15, bash 5.3 and shellcheck, a Debian 12 container (on-prem tools, restic/borg restores), a local Kubernetes 1.35
-  cluster with Helm 3.18 and OpenBao 2.7.1, and live `claude -p` sessions with and without permissions bypassed.
-  Probes against real cloud accounts are not yet run.
+**Tests:** `test_guard` (653 decisions), `test_hook`, `test_install`, `test_lint` (every rule has a probe),
+`test_guide_cli` (every cloud CLI command parses), `test_update`. Probes checked against current AWS, Azure, Google
+Cloud and DigitalOcean CLIs, Terraform 1.15, a Debian 12 container and a local Kubernetes 1.35 cluster. Not yet run
+against real cloud accounts.
 
 ## 2026-07-13 — chat-agents: attach-file + inline-prompt deployment
 

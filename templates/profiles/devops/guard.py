@@ -153,12 +153,13 @@ def is_secret(path, cwd):
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "venv", "__pycache__", ".tox", "dist", "build"}
 
 
-def secrets_under(directory, excludes=(), hidden=True, follow_links=False, limit=20_000):
-    """Secret files a recursive search of `directory` would read, minus `--exclude` globs. Symlinks inside the
-    folder are skipped unless the tool follows them (grep -R, rg -L)."""
+def secrets_under(directory, excludes=(), hidden=True, follow_links=False, limit=20_000, exclude_dirs=()):
+    """Secret files a recursive search of `directory` would read, minus `--exclude` globs and `--exclude-dir`
+    folders. Symlinks inside the folder are skipped unless the tool follows them (grep -R, rg -L)."""
     found, seen = [], 0
     for dirpath, dirnames, filenames in os.walk(directory):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and (hidden or not d.startswith("."))]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and (hidden or not d.startswith("."))
+                       and not any(fnmatch.fnmatch(d, e.rstrip("/")) for e in exclude_dirs)]
         for f in filenames:
             seen += 1
             if seen > limit:
@@ -328,7 +329,8 @@ def check_gcloud(args):
 
 DOCTL_SECRET = re.compile(r"\b(auth token|kubernetes cluster kubeconfig show|databases (connection|user get)|"
                           r"registry docker-config|registry login)\b")
-DOCTL_READ = {"list", "ls", "get", "show", "logs", "help", "version", "summary", "search"}
+DOCTL_READ = {"list", "ls", "get", "show", "logs", "help", "version", "summary", "search", "list-v2", "list-tags",
+              "list-manifests", "subscription-tiers", "available-regions", "get-active", "backups"}
 DOCTL_WRITE = {"create", "delete", "rm", "update", "apply", "tag", "untag", "rebuild", "resize", "power-on",
                "power-off", "power-cycle", "reboot", "shutdown", "fork", "restore", "migrate", "attach", "detach",
                "assign", "unassign", "reset", "upgrade", "add", "remove", "set", "save", "init", "switch"}
@@ -378,6 +380,17 @@ def check_kubectl(args):
         return ask("`kubectl logs -f`", "never returns")
     if verb in KUBECTL_READ:
         return None
+    if verb == "exec" and "--" in args:
+        inner = args[args.index("--") + 1:]
+        if bundled(args, {"-i", "--stdin"}) and not inner[1:]:
+            return ask("`kubectl exec -i`", "runs a script from stdin the guard can't see")
+        if inner[:1] and inner[0].rsplit("/", 1)[-1] in SHELL_BINARIES and inner[1:2] == ["-c"] and len(inner) == 3:
+            h = check_remote(inner[2])
+        else:
+            h = check_remote(" ".join(shlex.quote(w) for w in inner)) if inner else ask("`kubectl exec`", "has no command")
+        if h is None:
+            return None  # only reads inside the pod
+        return (h[0].replace("remote", "in-pod"), h[1], h[2])
     return ask("`kubectl %s`" % verb, "changes something in the cluster")
 
 
@@ -399,6 +412,9 @@ def check_helm(args):
         return None
     if words[0] in HELM_READ:
         return None
+    if words[0] == "unittest":  # the helm-unittest plugin renders charts locally; -u rewrites snapshot files
+        return ask("`helm unittest --update-snapshot`", "rewrites the chart's test snapshots") \
+            if bundled(args, {"-u", "--update-snapshot"}) else None
     return ask("`helm %s`" % words[0], "changes something in the cluster")
 
 
@@ -623,7 +639,7 @@ def check_python_code(code, cwd, label="inline Python"):
         elif isinstance(node, ast.Name) and node.id in PY_BANNED:
             hit = worse(hit, ask("%s using `%s`" % (label, node.id), "runs code the guard can't see"))
         elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("__") and node.attr.endswith("__"):
+            if node.attr.startswith("__") and node.attr.endswith("__") and node.attr not in {"__name__", "__doc__"}:
                 hit = worse(hit, ask("%s touching `%s`" % (label, node.attr), "reaches interpreter internals"))
             elif isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in PY_OS_ATTRS:
                 hit = worse(hit, ask("%s calling `os.%s`" % (label, node.attr), "can run, delete or rename"))
@@ -640,7 +656,7 @@ SSH_FLAGS_WITH_ARG = set("bcDEeFIiJLlmOoPpQRSWw")
 SSH_RISKY_OPTIONS = {"proxycommand", "localcommand", "permitlocalcommand", "remotecommand", "knownhostscommand",
                      "proxyusefdpass", "match"}
 REMOTE_READ_ANY_ARGS = {
-    "cat", "head", "ls", "stat", "wc", "grep", "egrep", "fgrep", "zgrep", "zcat", "df", "du", "free", "uptime",
+    "cd", "cat", "head", "ls", "stat", "wc", "grep", "egrep", "fgrep", "zgrep", "zcat", "df", "du", "free", "uptime",
     "ps", "uname", "id", "whoami", "lsblk", "findmnt", "md5sum", "sha256sum", "readlink", "realpath", "pwd",
     "netstat", "lsof", "last", "w", "who", "nproc", "lscpu", "getent", "dig", "nslookup", "host", "blkid",
     "lsb_release", "sort", "uniq", "cut", "awk", "sed", "tr", "less", "more", "echo", "printf", "true", "test",
@@ -690,6 +706,14 @@ def bundled(args, flags):
 
 def remote_segment(words):
     """One remote command segment (already split on pipes and ;). None when it only reads."""
+    if words and words[0] in {"bao", "vault"}:
+        verbs = [w for w in words[1:] if not w.startswith("-")]
+        if verbs[:1] in (["status"], ["version"]) or (verbs[1:2] == ["list"] and verbs[:1] in
+                                                       (["auth"], ["audit"], ["secrets"], ["policy"], ["kv"])):
+            return None  # names and seal state, not secret values
+        if verbs[:1] in (["read"], ["token"]) or verbs[:2] in (["kv", "get"], ["kv", "read"]):
+            return secret("remote `%s %s`" % (words[0], " ".join(verbs[:3])), "prints a secret")
+        return ask("remote `%s %s`" % (words[0], " ".join(verbs[:2])), "is a secrets tool the guard can't vet")
     while words and words[0] in {"sudo", "-n", "-E"}:
         words = words[1:]
     while words and ASSIGNMENT.match(words[0]):
@@ -698,6 +722,9 @@ def remote_segment(words):
         return None
     binary = words[0].rsplit("/", 1)[-1]
     args = words[1:]
+    if binary == "curl":  # `-o /dev/null` only throws the body away (used with -w to print the status code)
+        args = [a for k, a in enumerate(args) if not (a in {"-o", "--output"} and args[k + 1:k + 2] == ["/dev/null"])
+                and not (k and args[k - 1] in {"-o", "--output"} and a == "/dev/null") and a != "--output=/dev/null"]
     plain = [a for a in args if not a.startswith("-")]
     for a in plain:
         if is_secret(a, "/"):
@@ -1473,17 +1500,36 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
                 or any(re.fullmatch(r"-u+", a) for a in args)
             excludes = [a.split("=", 1)[1] for a in args if a.startswith(("--exclude=", "--glob=!", "-g!"))]
             excludes += [args[k + 1].lstrip("!") for k, a in enumerate(args[:-1]) if a in {"--exclude", "-g", "--glob"}]
+            exclude_dirs = [a.split("=", 1)[1] for a in args if a.startswith("--exclude-dir=")]
+            exclude_dirs += [args[k + 1] for k, a in enumerate(args[:-1]) if a == "--exclude-dir"]
             plain = [a for a in args if not a.startswith("-")]
             given = plain if any(a in {"-e", "-f", "--regexp", "--file"} for a in args) else plain[1:]
             paths = [a for a in given if os.path.isdir(os.path.join(cwd, a))] if given else ["."]
             follow = bool(bundled(args, {"-R", "--dereference-recursive"} if name != "rg" else {"-L", "--follow"}))
             for p in paths:
-                found = secrets_under(os.path.join(cwd, p), excludes, hidden=hidden, follow_links=follow)
+                found = secrets_under(os.path.join(cwd, p), excludes, hidden=hidden, follow_links=follow,
+                                      exclude_dirs=exclude_dirs)
                 if found:
+                    dirs = sorted({f.split(os.sep)[0] for f in found if os.sep in f})
+                    tip = "".join(" --exclude-dir=%s" % d for d in dirs[:3])
                     return secret("`%s` over `%s`" % (name, p), "would search secret files (%s). Add "
-                                  "--exclude='.env*' --exclude='*.secret' or narrow the path" % ", ".join(found[:3]))
+                                  "--exclude='.env*' --exclude='*.secret'%s or narrow the path"
+                                  % (", ".join(found[:3]), tip))
         return None
 
+    if name == "gh":
+        verbs = positional(args, {"-R", "--repo", "-q", "--jq", "-t", "--template", "--json", "-L", "--limit",
+                                  "-H", "--header", "--hostname"})
+        if verbs[:2] == ["auth", "status"] and "--show-token" not in args and "-t" not in args:
+            return None
+        if verbs[:1] and verbs[0] in {"repo", "pr", "issue", "run", "release", "workflow", "search", "label",
+                                      "cache"} and verbs[1:2] and verbs[1] in {"view", "list", "diff", "checks",
+                                                                               "status", "issues", "prs", "repos",
+                                                                               "code", "commits"}:
+            return None
+        if verbs[:1] == ["api"] and not bundled(args, {"-X", "--method", "-f", "-F", "--field", "--raw-field",
+                                                       "--input"}):
+            return None  # GET only
     if name in SECRET_TOOLS:
         verbs = positional(args, {"-format", "--format", "-field", "--field", "--vault", "--account", "-o", "--output"})
         if name in {"vault", "bao"} and (verbs[:1] in (["status"], ["version"]) or verbs[1:2] == ["list"]
@@ -1649,6 +1695,11 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         outs += [a.split("=", 1)[1] for a in args if a.startswith(("--output=", "--output-directory="))]
         if any(is_protected(o, cwd) for o in outs):
             return ask("`%s` writing into a protected path" % name, "changes the guard, its settings or a protected file")
+    if name == "ifconfig":
+        plain = [a for a in args if not a.startswith("-")]
+        if set(args) - set(plain) <= {"-a", "-l", "-L", "-u", "-d", "-v"} and len(plain) <= 1:
+            return None
+        return ask("`ifconfig %s`" % " ".join(args), "changes a network interface")
     if name == "kubescape":
         sub = next((a for a in args if not a.startswith("-")), "")
         if "--show-secrets" in args:
@@ -1730,7 +1781,9 @@ MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=[\"']?\$\(\s*mktemp\b[^)]*\)")
 STATUS_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\?")
 KNOWN = {}  # variables set to literals earlier in the command being checked; inherited by sh -c / xargs
 FUNCS = set()  # shell functions defined in the text being checked; their bodies are checked where defined
-FUNC_DEF = re.compile(r"(?m)^\s*(?:function\s+([A-Za-z_][\w-]*)|([A-Za-z_][\w-]*)\s*\(\s*\))")
+FUNC_DEF = re.compile(r"(?m)(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:function\s+([A-Za-z_][\w-]*)|([A-Za-z_][\w-]*)\s*\(\s*\))")
+# NAME=literal at the top level of a command line, so `$(...)` checked before the assignment still sees its value
+TOP_ASSIGN = re.compile(r"(?m)(?:^|[;&\n])\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=([^\s;&|`$()'\"<>]+)(?=\s*(?:;|&&|\n|$))")
 
 
 def substitute(text, known):
@@ -1746,13 +1799,21 @@ def check_command(command, cwd, depth=0, raw=None, test_mode=None):
     """The worst decision over every part of a shell command line, or None when all of it is safe."""
     global KNOWN, FUNCS, TEST_MODE
     outer_test = TEST_MODE
+    raw_defs = command
     if test_mode is not None:
         TEST_MODE = test_mode
     command = command.replace("\\\n", " ")  # line continuations
     raw = raw if raw is not None else command
+    # `name(){ body; }` mid-line: check the body as a { ...; } group; calls to `name` are then known (FUNCS)
+    command = re.sub(r"(^|[;&|\n]\s*)(?:function\s+)?[A-Za-z_][\w-]*\s*\(\s*\)\s*\{", r"\1{ ", command)
     outer, known = KNOWN, dict(KNOWN)
     outer_funcs = FUNCS
-    FUNCS = FUNCS | {a or b for a, b in FUNC_DEF.findall(command)}
+    FUNCS = FUNCS | {a or b for a, b in FUNC_DEF.findall(raw_defs)}
+    tops = TOP_ASSIGN.findall(command)
+    names = [n for n, _ in tops]
+    for n, v in tops:
+        if names.count(n) == 1 and n not in known and not DANGEROUS_ENV.match(n):
+            known[n] = v  # assigned once, to a literal: the same value wherever it's used
     for m in MKTEMP_ASSIGN.finditer(command):
         known[m.group(1)] = "/tmp/__mktemp__"
     for m in STATUS_ASSIGN.finditer(command):
@@ -1952,8 +2013,11 @@ def consent_given(payload, token, command):
     for i, e in enumerate(entries[last_human + 1:], start=last_human + 1):
         for b in _blocks(e):
             if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
-                qs = [q.get("question", "") for q in (b.get("input") or {}).get("questions", []) if isinstance(q, dict)]
-                hits = [q for q in qs if "[run:%s]" % token in q]
+                inp = b.get("input") or {}
+                qs = [q.get("question", "") for q in inp.get("questions", []) if isinstance(q, dict)]
+                hidden = str((inp.get("metadata") or {}).get("source", "")) == "run:%s" % token
+                # the token sits in the hidden metadata (one question per call) or, from older sessions, in the text
+                hits = qs[:1] if hidden and len(qs) == 1 else [q for q in qs if "[run:%s]" % token in q]
                 if hits:
                     asked[b.get("id")] = hits
             if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in asked:
@@ -1968,7 +2032,8 @@ def consent_given(payload, token, command):
     return runs <= 1  # the call being checked may already be in the transcript; a second run needs a new yes
 
 
-CONSENT_HOWTO = (" To run it, ask the user with AskUserQuestion: put [run:{token}] in the question, explain in plain "
+CONSENT_HOWTO = (" To run it, ask the user with AskUserQuestion, one question per call, with metadata "
+                 "{{\"source\": \"run:{token}\"}} (hidden from the user; don't put it in the question text). Explain in plain "
                  "words what the command or script does, why it's needed, what could break and how to undo it, and "
                  "offer the options \"Yes, run it\" and \"No\". If they choose Yes, run the exact same command again, "
                  "unchanged. If AskUserQuestion isn't available (a non-interactive run), explain it and ask the user "

@@ -114,6 +114,12 @@ CORE_CASES = [
     ('aws secretsmanager batch-get-secret-value --secret-id-list x', 'deny'),
     ('aws ssm get-parameter --name /x --with-decryption', 'deny'),
     ('kubescape scan --show-evidence --show-secrets', 'deny'),
+    ("kubectl -n openbao exec openbao-0 -- bao kv get kv/app", 'deny'),
+    ("q(){ cat .env; }; q", 'deny'),
+    ("kubectl -n gw exec pod/app -- env", 'deny'),
+    ("kubectl -n gw exec pod/app -- cat /app/.env", 'deny'),
+    ("gh auth token", 'deny'),
+    ("grep -rn foo --exclude-dir=.git .", 'deny'),
     ('kubescape scan files/.kubeconfig/prod.yaml', 'deny'),
     ('trivy config files/kubeconfig', 'deny'),
     ('aws configure export-credentials --profile acme', 'deny'),
@@ -287,6 +293,24 @@ CORE_CASES = [
     ('awk \'{print > "/Users/x/.zshrc"}\' file', 'ask'),
     ('awk \'/"/ { print | "sh" }\' file', 'ask'),
     ("kubescape fix results.json", 'ask'),
+    ("kubectl -n gw exec pod/app -- curl -s -o /tmp/x http://localhost:8080/up", 'ask'),
+    ("python3 -I -c 'print(().__class__.__bases__)'", 'ask'),
+    ("q(){ kubectl delete ns x; }; q", 'ask'),
+    ("x=1; f() { helm upgrade r c; }; f", 'ask'),
+    ("kubectl -n gw exec pod/app -- ./bin/rails runner 'User.delete_all'", 'ask'),
+    ("kubectl -n gw exec pod/es -- curl -sS -X POST http://localhost:9200/_refresh", 'ask'),
+    ("kubectl -n gw exec -i pod/app -- sh", 'ask'),
+    ("kubectl -n gw exec pod/app -- sh -c 'rm -rf /data'", 'ask'),
+    ("kubectl -n gw exec pod/app -- sh -c 'echo x > /etc/hosts'", 'ask'),
+    ("kubectl -n openbao exec openbao-0 -- bao operator seal", 'ask'),
+    ("doctl compute volume snapshot abc --snapshot-name x", 'ask'),
+    ("doctl registry garbage-collection start gallium", 'ask'),
+    ("helm unittest -u helm_charts/app/1.0.0", 'ask'),
+    ("gh repo clone a/b", 'ask'),
+    ("gh pr create --fill", 'ask'),
+    ("gh api -X DELETE repos/a/b", 'ask'),
+    ("gh api repos/a/b/issues -f title=x", 'ask'),
+    ("ifconfig en0 down", 'ask'),
     ("kubescape patch --image nginx:1.25", 'ask'),
     ("kubescape scan framework nsa --submit", 'ask'),
     ("kubescape scan --account abc", 'ask'),
@@ -467,6 +491,29 @@ CORE_CASES = [
     ("awk '{print $1}' file", 'allow'),
     ("awk '$3 > 5 {print $1}' file", 'allow'),
     ("kubescape scan framework nsa --kubeconfig files/.kubeconfig/gallium-doks-prod-kubeconfig.yaml", 'allow'),
+    ("kubectl -n openbao exec openbao-0 -- bao status -format=json", 'allow'),
+    ("kubectl -n gw exec pod/app -- curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/up", 'allow'),
+    ("python3 -I -c 'import json; d=json.load(open(\"a.json\")); print(type(d).__name__)'", 'allow'),
+    ("q(){ kubectl get ns; }; q", 'allow'),
+    ("function q { kubectl get pods; }; q", 'allow'),
+    ("H=scripts/ok.sh; echo $(bash -n $H)", 'allow'),
+    ("kubectl -n openbao exec openbao-0 -- sh -c 'bao kv list kv/ 2>&1'", 'allow'),
+    ("kubectl -n gw exec deploy/es -- curl -sS 'http://localhost:9200/_cat/indices?v'", 'allow'),
+    ("kubectl -n gw exec pod/app -- sh -c 'cd /rails && cat app/controllers/sessions_controller.rb'", 'allow'),
+    ("kubectl -n gw exec pod/app -- sh -c 'getent hosts smtp.gmail.com'", 'allow'),
+    ("doctl registry repository list-v2 --format Name,TagCount", 'allow'),
+    ("doctl registry repository list-tags gwirian/gwirian-svc", 'allow'),
+    ("doctl registry options subscription-tiers", 'allow'),
+    ("doctl registry garbage-collection list", 'allow'),
+    ("doctl databases backups b6e28f05 --no-header", 'allow'),
+    ("helm unittest helm_charts/app/1.0.0", 'allow'),
+    ("gh repo view TheAcmada/gwirian", 'allow'),
+    ("gh pr list --repo a/b", 'allow'),
+    ("gh api repos/a/b/actions/runs", 'allow'),
+    ("gh auth status", 'allow'),
+    ("ifconfig", 'allow'),
+    ("ifconfig en0", 'allow'),
+    ("grep -rn foo --exclude='.env*' --exclude='*.secret' --exclude-dir=files --exclude-dir=.claude .", 'allow'),
     ("KUBECONFIG=files/kubeconfig kubescape scan framework nsa,mitre --format pretty-printer --verbose=false", 'allow'),
     ("kubescape list frameworks", 'allow'),
     ("prowler aws --profile prod --region ap-southeast-1 --severity critical high --output-formats csv html", 'allow'),
@@ -655,13 +702,19 @@ def main():
         out = json.loads(r.stdout)["hookSpecificOutput"]
         return out["permissionDecision"], out["permissionDecisionReason"]
 
-    def transcript(name, token, answer, after=()):
-        q = "Run `bash scripts/launch.sh` to start replication? [run:%s]" % token
+    def transcript(name, token, answer, after=(), hidden=True, extra_question=False):
+        q = "Run `bash scripts/launch.sh` to start replication?" + ("" if hidden else " [run:%s]" % token)
+        qs = [{"question": q, "header": "Run", "multiSelect": False,
+               "options": [{"label": "Yes, run it"}, {"label": "No"}]}]
+        if extra_question:
+            qs.append({"question": "Also tag it?", "header": "Tag", "multiSelect": False,
+                       "options": [{"label": "Yes"}, {"label": "No"}]})
+        inp = {"questions": qs}
+        if hidden:
+            inp["metadata"] = {"source": "run:%s" % token}
         rows = [{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "start it"}]}},
                 {"type": "assistant", "message": {"role": "assistant", "content": [
-                    {"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {"questions": [
-                        {"question": q, "header": "Run", "multiSelect": False,
-                         "options": [{"label": "Yes, run it"}, {"label": "No"}]}]}}]}},
+                    {"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": inp}]}},
                 {"type": "user", "message": {"role": "user", "content": [
                     {"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
                  "toolUseResult": {"questions": [], "answers": {q: answer}}}] + list(after)
@@ -676,8 +729,14 @@ def main():
 
     cmd = "bash scripts/launch.sh"
     dec, why = reason(cmd)
-    token = (_re.search(r"\[run:([0-9a-f]+)\]", why) or [None, ""])[1]
+    token = (_re.search(r"run:([0-9a-f]{12})", why) or [None, ""])[1]
     expect("consent: the deny explains how to ask, with a token", True, dec == "deny" and bool(token) and "AskUserQuestion" in why)
+    expect("consent: the token goes in hidden metadata, not the question", True,
+           "metadata" in why and "[run:" not in why)
+    expect("consent: a token in the question text (older sessions) still works", "allow",
+           reason(cmd, transcript("text", token, "Yes, run it", [bash_use(cmd)], hidden=False))[0])
+    expect("consent: hidden token with two questions in one call does not count", "deny",
+           reason(cmd, transcript("two", token, "Yes, run it", [bash_use(cmd)], extra_question=True))[0])
     expect("consent: Yes lets it run (bypass mode)", "allow", reason(cmd, transcript("yes", token, "Yes, run it", [bash_use(cmd)]))[0])
     expect("consent: Yes lets it run (default mode, no second prompt)", "allow",
            reason(cmd, transcript("yes2", token, "Yes, run it", [bash_use(cmd)]), mode="default")[0])
@@ -711,7 +770,7 @@ def main():
         entries = [json.loads(line) for line in f]
     expect("decision log has asks and denies", True, {"ask", "deny"} <= {e["decision"] for e in entries})
 
-    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 19
+    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 22
     for f_ in failures:
         print("  FAIL  " + f_)
     print("  %s  guard: %d/%d decisions as expected" % ("PASS" if not failures else "FAIL", total - len(failures), total))
