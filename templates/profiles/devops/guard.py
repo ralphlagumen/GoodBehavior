@@ -347,7 +347,7 @@ def check_doctl(args):
 
 
 KUBECTL_READ = {"get", "describe", "logs", "top", "explain", "api-resources", "api-versions", "version",
-                "cluster-info", "events", "diff", "wait"}
+                "cluster-info", "events", "diff", "wait", "port-forward"}
 KUBECTL_VALUE_FLAGS = {"-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-l", "--selector",
                        "-o", "--output", "-c", "--container", "--since", "--tail", "-f", "--filename"}
 
@@ -542,7 +542,8 @@ PY_MODULES = {
     "decimal", "fractions", "pprint", "typing", "dataclasses", "enum", "shlex", "operator", "copy", "uuid",
     "random", "unicodedata", "heapq", "bisect", "calendar", "zoneinfo", "ipaddress", "html", "urllib.parse",
     "tomllib", "configparser", "struct", "binascii", "argparse", "pathlib", "yaml", "io", "contextlib",
-    "logging", "gzip", "zipfile", "tarfile", "xml.etree.ElementTree", "email", "secrets",
+    "logging", "gzip", "zipfile", "tarfile", "xml.etree.ElementTree", "email", "secrets", "ast", "tokenize",
+    "token", "keyword", "py_compile", "tomli", "graphlib", "textwrap", "colorsys",
 }
 PY_OS_ATTRS = {"path", "environ", "getcwd", "listdir", "walk", "scandir", "stat", "sep", "linesep", "getenv",
                "cpu_count", "getpid", "curdir", "pardir", "extsep", "pathsep", "fspath", "makedirs", "mkdir"}
@@ -558,6 +559,9 @@ def py_module_ok(name):
 PY_BANNED = {"exec", "eval", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals",
              "vars", "breakpoint", "__builtins__", "memoryview"}
 PY_WRITE_MODE = re.compile(r"[wax+]")
+EXTERNAL_PATH = re.compile(r"sys\.argv|input\s*\(|environ|getenv|stdin")
+PROTECTED_HINT = re.compile(r"\.claude|\.mcp\.json|\.ssh|\.aws|\.kube|\.git/|\.gitconfig|\.zshrc|\.bashrc|\.profile|"
+                            r"/etc/|site-packages|LaunchAgents|\.terraform|expanduser|Path\.home|HOME")
 
 
 def check_python_code(code, cwd, label="inline Python"):
@@ -593,8 +597,9 @@ def check_python_code(code, cwd, label="inline Python"):
                 for kw in node.keywords:
                     if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
                         mode = str(kw.value.value)
-                if PY_WRITE_MODE.search(mode) and not paths:
-                    hit = worse(hit, ask("%s writing a computed path" % label, "can't be checked against protected files"))
+                if PY_WRITE_MODE.search(mode) and not paths and (PROTECTED_HINT.search(code) or EXTERNAL_PATH.search(code)):
+                    hit = worse(hit, ask("%s writing a computed path" % label, "the path comes from outside the code or "
+                                         "points near a protected location"))
                 for p in paths:
                     if not PY_WRITE_MODE.search(mode) and is_secret(p, cwd):
                         return secret("%s reading `%s`" % (label, p), "prints a secret file")
@@ -1500,6 +1505,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     if name == "ansible-inventory":
         return None
     if name in SHELL_BINARIES:
+        if any(a == "-n" or (re.fullmatch(r"-[a-zA-Z]+", a) and "n" in a[1:] and "c" not in a[1:]) for a in args):
+            return None  # -n (noexec): parses the script for syntax errors, runs nothing
         for k, a in enumerate(args):
             if a == "-c" and k + 1 < len(args):
                 return check_command(args[k + 1], cwd, depth + 1)
@@ -1550,7 +1557,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             real = resolve(script, cwd)
             if real and os.path.isfile(real):
                 return check_script(real, cwd, depth, interpreter="python3")
-            return ask("`python %s`" % script, "runs a file the guard can't find")
+            return ask("`python %s`" % script, "runs a file the guard can't find yet. Write the file first, then run it "
+                       "in a separate command so the guard can read it")
         for body, _quoted in stdin_bodies:
             h = check_python_code(body, cwd)
             if h:
@@ -1588,7 +1596,10 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         return None
     if name in {"sed", "gsed"}:
         inplace = any(a.startswith(("-i", "--in-place")) for a in args)
-        files = [a for a in args[1:] if not a.startswith("-")]
+        plain = [a for a in args if not a.startswith("-") and a != ""]
+        has_e = any(a in {"-e", "--expression", "-f", "--file"} for a in args)
+        files = [a for a in (plain if has_e else plain[1:]) if a not in
+                 {args[k + 1] for k, x in enumerate(args[:-1]) if x in {"-e", "--expression"}}]
         if any(re.search(r"(^|[;{}\n])\s*[0-9,$/!]*\s*[wWe]\b|/[gpIiM0-9]*[we](\s|;|$)", a) for a in args):
             return ask("`sed` script with w or e", "can write files or run commands")
         if inplace and any(is_protected(f, cwd) for f in files):
@@ -1608,6 +1619,9 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             k += 2 if args[k] in {"-P", "-n", "-I", "-L", "-s", "-d", "-E", "-a", "--max-procs", "--max-args",
                                   "--delimiter", "--arg-file"} else 1
         return check_segment_words(args[k:], cwd, depth, raw) if args[k:] else None
+    if name == "scutil":
+        return None if args[:1] in (["--dns"], ["--proxy"], ["--nwi"], ["--get"], ["-r"]) else ask(
+            "`scutil %s`" % " ".join(args[:1]), "can change system network settings")
     if name == "date" and bundled(args, {"-s", "--set"}):
         return ask("`date -s`", "sets the clock")
     if name == "nc" and not bundled(args, {"-z"}):

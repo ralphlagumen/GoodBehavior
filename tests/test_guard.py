@@ -501,6 +501,10 @@ PROJECT_CASES = [
     ("sh scripts/outer.sh", "ask"), ("sh scripts/leak.sh", "deny"), ("python3 scripts/sdk.py", "ask"),
     ("python3 scripts/pure.py", "allow"), ("npm run deploy", "ask"), ("npm test", "allow"),
     ("bash scripts/tunnel.sh", "allow"), ("bash scripts/hidden.sh", "ask"),
+    ("bash -n scripts/hidden.sh && echo syntax ok", "allow"), ("sh -n scripts/launch.sh", "allow"),
+    ("sed -i '' 's/(`a.md:1-2`)/(`a.md:3-4`)/' docs/notes.md", "allow"), ("sed -i '' 's/x/y/' .claude/settings.json", "ask"),
+    ("kubectl port-forward svc/grafana 3000:80 -n monitoring", "allow"), ("scutil --dns", "allow"),
+    ("python3 -c \"import ast; ast.parse(open('scripts/pure.py').read())\"", "allow"),
     # obfuscation
     ("ter'r'aform apply", "ask"), ("T=terraform; $T apply", "ask"), ("echo dGVycmFmb3JtIGFwcGx5 | base64 -d | sh", "ask"),
     ("python3 -c \"import os; os.system('terraform apply')\"", "ask"), ("x='a[$(reboot)]'; [[ $x -eq 1 ]]", "ask"),

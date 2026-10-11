@@ -106,6 +106,18 @@ def main():
         check("re-run reports already up to date",
               r2.returncode == 0 and report2["status"] == "already up to date")
 
+        # a cleanly merged file keeps its local edits on the NEXT update too, even when upstream didn't change it
+        # (regression: a recorded merged sha256 made the next run fast-forward the template over local edits)
+        write(source, "templates/z.md", "unrelated\n")
+        git(source, "add", "-A")
+        git(source, "commit", "-qm", "unrelated")
+        r_next = subprocess.run([sys.executable, UPDATE, "--target", target], capture_output=True, text=True)
+        with open(os.path.join(target, "docs/b.md")) as f:
+            b2 = f.read()
+        check("merged file kept its local edits on the next update", "line5-LOCAL" in b2 and "line1-UPSTREAM" in b2,
+              r_next.stdout[:200])
+        check("merged file not reported as fast-forwarded", "docs/b.md" not in json.loads(r_next.stdout).get("updated", []))
+
         # a manifest that names the source as ~/... (portable, no machine-local path) still resolves
         mpath = os.path.join(target, ".claude/goodbehavior/manifest.json")
         with open(mpath) as f:

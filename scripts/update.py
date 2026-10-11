@@ -109,15 +109,18 @@ def main():
             entry["sha256"] = sha256_bytes(ours)
             report["unchanged"].append(key)
             continue
-        if sha256_bytes(ours) == entry.get("sha256"):
-            # untouched since install → fast-forward to upstream
+        base = git_show(source, base_commit, src_rel)
+        # Untouched = identical to the upstream version it came from. Compare with that version itself, not only the
+        # recorded sha256: an older update.py recorded the *merged* content after a clean merge, and trusting that
+        # sha alone made the next update overwrite local edits with the template.
+        untouched = ours == base if base is not None else sha256_bytes(ours) == entry.get("sha256")
+        if untouched:
             if not args.dry_run:
                 with open(local_path, "wb") as f:
                     f.write(theirs)
                 entry["sha256"] = sha256_bytes(theirs)
             report["updated"].append(key)
             continue
-        base = git_show(source, base_commit, src_rel)
         if base is None:
             report["warnings"].append(f"{key}: no base at {base_commit[:8]} — left as-is; merge by hand")
             continue
@@ -125,9 +128,9 @@ def main():
         if not args.dry_run:
             with open(local_path, "wb") as f:
                 f.write(merged)
-            if clean:
-                entry["sha256"] = sha256_bytes(merged)
-            # on conflict: leave the stale sha256 so a post-resolution re-run reconciles cleanly
+            # the manifest records the upstream version at sourceCommit, never the local or merged content, so the
+            # next update still sees the local edits and merges them instead of fast-forwarding over them
+            entry["sha256"] = sha256_bytes(theirs)
         report["merged" if clean else "conflict"].append(key)
 
     if not args.dry_run:

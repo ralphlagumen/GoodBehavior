@@ -50,6 +50,10 @@ and a guard that lets investigation run but stops changes and secret leaks.
 - Trusted commands: regexes in a project's `.claude/goodbehavior/guard-allow.txt` turn an ask into a run (never a
   deny into a run). Test files (`bats`, `node`) are read before running; inside them, `PATH` mocks and arithmetic
   are tolerated.
+- Investigation stays unblocked: `bash -n`/`sh -n` syntax checks, `kubectl port-forward`, parser-only Python
+  (`ast`, `tokenize`), `scutil --dns` and `sed -i` scripts containing backticks run; a Python script writing computed
+  paths asks only when the path comes from arguments, input or the environment, or the code mentions a protected
+  location.
 - Without `guard.py`, `done-gate.py` falls back to a simpler text-matching guard built from the profile's gate
   sections.
 
@@ -58,6 +62,10 @@ and a guard that lets investigation run but stops changes and secret leaks.
   profile and PreToolUse (`*`) only when a planned profile ships a guard or gate rules (today only devops), expands
   `~` in paths and keeps `updatedAt` when adding files; `update.py` expands `~` too. `adopt` asks which
   platforms and tools a project uses; `audit` points devops audits at the profile's lenses.
+- **`update.py` data-loss fix:** a file was treated as "untouched" when its sha256 matched the manifest, but after a
+  clean merge the manifest held the *merged* content's sha256, so the next update overwrote local edits with the
+  template. It now compares the local file with the upstream version it came from, and records only upstream
+  sha256s. Adopters need no manual repair: the comparison no longer relies on the recorded value.
 - **Existing adopters:** `/update-goodbehavior` updates files, not `settings.json`. Set the PreToolUse matcher for
   `done-gate.py` to `*`, add `devops/guard.py` with the install script, and add `.claude/goodbehavior/guard.log`,
   `.secret` and (for Kubernetes) `files/kubeconfig` to `.gitignore`.
