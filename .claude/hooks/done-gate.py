@@ -36,8 +36,9 @@ Guard (PreToolUse on Bash, Read, Grep): reads the profile's "### gate: change" a
 sections. A command that matches a change "match:" line, or hides one inside a make target, a script or
 inline code (followed a few levels deep), gets "ask": the user must approve it. A command that would print
 a secret (a secrets "match:" line, or a reader such as cat/grep pointed at a secrets "files:" path), or a
-Read/Grep of such a file, gets "deny". Writing to a secret file without reading it is allowed. Anything
-else runs. No gate sections → no-op.
+Read/Grep of such a file, gets "deny". Writing to a secret file without reading it is allowed. An edit
+(Edit/Write tools or a shell write) to a "### gate: protect" "files:" path, such as the hooks and settings,
+gets "ask". Anything else runs. No gate sections → no-op.
 
 Wire as a Stop hook (and a PreToolUse hook for Bash) in .claude/settings.json. Requires only python3.
 """
@@ -249,7 +250,8 @@ def segments(line):
         i = 0
         while i < len(toks):
             t = toks[i]
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t) or t in WRAPPERS or (t.startswith("-") and i and toks[i - 1] in WRAPPERS):
+            assignment = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t)
+            if assignment or t in WRAPPERS or (t.startswith("-") and i and toks[i - 1] in WRAPPERS):
                 i += 1
             elif i and toks[i - 1] == "timeout" and re.fullmatch(r"[0-9.]+[smhd]?", t):
                 i += 1
@@ -291,7 +293,8 @@ def make_rules(directory, makefile=None):
                 continue
             line = raw.split("#", 1)[0].rstrip()
             inc = re.match(r"^-?(include|sinclude)\s+(.+)$", line)
-            m_var = re.match(r"^(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$", line)
+            m_var = re.match(r"^(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$",
+                             line)
             m_rule = re.match(r"^([^:=#\t][^:=#]*?)\s*::?\s*([^=].*)?$", line)
             if inc:
                 for f in inc.group(2).split():
@@ -430,12 +433,46 @@ def reads_secret_file(command, gates):
             continue
         if head in READERS and any(secret_file(a, gates) for a in args if not a.startswith("-")):
             return True
-        if re.search(r"<\s*(\S+)", " ".join(toks)) and secret_file(re.search(r"<\s*(\S+)", " ".join(toks)).group(1), gates):
+        redirect_in = re.search(r"<\s*(\S+)", " ".join(toks))
+        if redirect_in and secret_file(redirect_in.group(1), gates):
             return True
     return False
 
 
-def decide(out, decision, reason):
+WRITERS = {"cp", "mv", "rm", "ln", "chmod", "chown", "truncate", "tee", "install", "rsync", "dd", "unlink", "touch"}
+
+
+def protected_file(path, gates):
+    return any(m.search(path) for m in gates.get("protect", {}).get("files", []))
+
+
+def writes_protected_file(command, gates):
+    """A shell write aimed at a protected file: a redirect, a writer command, `sed -i`/`perl -i`, or inline code
+    that names the file."""
+    for target in re.findall(r">{1,2}\|?\s*([^\s;&|<>]+)", command):
+        if protected_file(target, gates):
+            return True
+    for toks in segments(command):
+        head = os.path.basename(toks[0])
+        args = [a for a in toks[1:] if not a.startswith("-")]
+        in_place = head in ("sed", "perl") and any(a.startswith(("-i", "--in-place")) or a == "-pi" for a in toks[1:])
+        code = inline_code(toks)
+        if (head in WRITERS or in_place) and any(protected_file(a, gates) for a in args):
+            return True
+        if code and any(protected_file(w, gates) for w in re.findall(r"[\w./~-]+", code)):
+            return True
+    return False
+
+
+BYPASS_NOTE = (" Permissions are bypassed in this session, so it can't be approved here: explain it to the user, who "
+               "can run it themselves or approve it in a normal permission mode.")
+
+
+def decide(out, decision, reason, mode=None):
+    """Emit a PreToolUse decision. With permissions bypassed, Claude Code may skip an "ask" (observed for Edit), so
+    an ask becomes a deny there."""
+    if decision == "ask" and mode == "bypassPermissions":
+        decision, reason = "deny", reason + BYPASS_NOTE
     json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                       "permissionDecisionReason": reason}}, out)
 
@@ -450,7 +487,14 @@ def guard(data):
     tool_input = data.get("tool_input") or {}
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     secrets = gates.get("secrets", {})
+    ask = lambda reason: decide(sys.stdout, "ask", reason, data.get("permission_mode"))  # noqa: E731
 
+    if tool in ("edit", "write", "multiedit", "notebookedit"):
+        path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        if path and protected_file(path, gates):
+            ask("GoodBehavior guard: this edits the guard's own hooks, settings or rules. "
+                   "Approve only if Claude has explained what it is changing and why.")
+        return
     if tool in ("read", "grep", "notebookread"):
         path = str(tool_input.get("file_path") or tool_input.get("path") or tool_input.get("notebook_path") or "")
         if path and secret_file(path, gates):
@@ -469,13 +513,18 @@ def guard(data):
                "value without printing it, or ask the user to run it themselves.")
         return
 
+    if writes_protected_file(cmd, gates):
+        ask("GoodBehavior guard: this changes the guard's own hooks, settings or rules. "
+               "Approve only if Claude has explained what it is changing and why.")
+        return
+
     hits = [(w, l) for w, l, _ in expanded_lines(cmd, cwd) if changes_things(l, gates)]
     hidden = [(w, l) for w, l, _ in expanded_lines(cmd, cwd)[1:]
               if any(m.search(l) for m in secrets.get("match", [])) or reads_secret_file(l, gates)]
     if not hits and not hidden:
         return  # assessed: nothing in it changes infrastructure or reveals a secret, so it runs
     shown = "; ".join(f"{w}: {l[:90]}" for w, l in (hits + hidden)[:3])
-    decide(sys.stdout, "ask", "GoodBehavior guard: this can change live systems or touch secrets, and that may not "
+    ask("GoodBehavior guard: this can change live systems or touch secrets, and that may not "
            f"be undoable. Found: {shown}. Approve only if Claude has already explained, in plain words, why it "
            "needs to run, what could break, and how to undo it.")
 

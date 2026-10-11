@@ -8,10 +8,10 @@ truth-source: the live environment (provider APIs, real network paths, the state
   a user hitting an endpoint, an on-call engineer running a restore.
 - **the-real-thing:** the resources as they exist in the target environment after apply, read back from the provider
   (or the hosts, for on-prem). The code, the plan and the console form you filled in do not count.
-- **verify:** with the user's consent (see below), apply to a non-production environment first, then exercise the infrastructure from the consumer's
-  network position: resolve the DNS name, call the endpoint, connect to the database from the app's subnet, assume the
-  role and try the denied action, fail over, restore the backup. Then re-run the plan and confirm it shows no changes
-  (no drift, no perpetual diff).
+- **verify:** with the user's consent (see below), apply to a non-production environment first, then exercise the
+  infrastructure from the consumer's network position: resolve the DNS name, call the endpoint, connect to the
+  database from the app's subnet, assume the role and try the denied action, fail over, restore the backup. Then
+  re-run the plan and confirm it shows no changes (no drift, no perpetual diff).
 - **evidence:** the reviewed plan, the apply output, a post-apply plan showing no changes, and the probe output from
   the consumer's position (`curl`, `dig`, `nc`, a CLI `describe`/`get` of the resource, a restore log). Each piece
   names the environment and account/subscription/project it came from.
@@ -23,9 +23,9 @@ truth-source: the live environment (provider APIs, real network paths, the state
   (reachable, resolvable, allowed)? **Security:** the attack surface, judged against today's automated attacks (rules
   and probes in `devops/baseline.md`, Security and attack surface; see "Security findings" below). **Reliability:**
   single points of failure, backups restore-tested, failover. **Drift:** code vs state vs live resource. **Cost:**
-  over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing model, storage
-  tier, idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every cost finding
-  with all five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A cost cut that weakens
+  over-provisioned, under-provisioned, redundancy that the requirements don't need, wrong pricing model, storage tier,
+  idle resources, data transfer (rules and probes in `devops/baseline.md`, Cost). Write every cost finding with all
+  five parts of "Cost in every proposal": now, change, saving, performance and risk, way back. A cost cut that weakens
   reliability is a contradiction between lenses: flag it, don't pick silently.
 - **pause points:** **every** change to infrastructure, in **any** environment, dev included: an apply, destroy or
   import; a state edit (`state rm`/`mv`/`push`); a CLI call that creates, updates, deletes, restarts or scales
@@ -59,6 +59,14 @@ Rank by likely impact, worst first. Never call something "secure"; say which che
   the user to do it. Use secrets by reference (environment variables, secret-manager lookups), never by echoing them.
 - Probe: `git check-ignore .secret .env` lists both; `stat -c '%a' .secret` (Linux) or `stat -f '%Lp' .secret`
   (macOS) prints `600`; `gitleaks detect` finds nothing in the repo or its history.
+
+## Credentials and profiles: a suggestion
+
+We suggest keeping the values that pick an account or a tool in the project's `.env` (loaded by the Makefile,
+`direnv` or `set -a; . ./.env; set +a`) rather than typing them in front of commands: `AWS_PROFILE`, `AWS_REGION`,
+`ARM_SUBSCRIPTION_ID`, `CLOUDSDK_CORE_PROJECT`, `TF_VAR_*` that aren't secret, and so on. Every command then runs
+against the same, visible account, and a one-off `AWS_PROFILE=admin aws ...` stands out. Actual secrets go in
+`.secret` (see Secrets). This is a suggestion; follow the project's own convention if it has one.
 
 ## Running scripts and make targets
 
@@ -124,15 +132,19 @@ Assume the user is not an infrastructure expert. Many people now build with AI a
 **Guides** (in `devops/` next to this file; install only the ones that match): `baseline` has the cross-cloud rules,
 each paired with its live probe (IaC and state, CI/CD, secrets and identity, networking, observability, backup/DR,
 cost). It always comes with this profile. Then add one provider guide per platform in use (`aws`, `azure`, `gcp`,
-`digitalocean`, `onprem`; each maps the baseline rules to that platform's services and CLI probes) and one tool guide per IaC tool in use (`terraform`: safe plan and apply,
-state, environments, code; `shell`: writing and running scripts safely).
+`digitalocean`, `onprem`; each maps the baseline rules to that platform's services and CLI probes) and one tool guide
+per IaC tool in use (`terraform`: safe plan and apply, state, environments, code; `shell`: writing and running scripts
+safely).
 
 ## Done-gate questions
 
 The done-gate hook asks these in place of its generic self-check when this profile is installed. Edit them freely.
-`match:` lines (one regex each, any can match) list the commands that change infrastructure. The guard hook stops
-each of these and asks the user first; for the done-gate, a turn that ran one (or edited files) is a **change**, any
-other turn is an **investigation**. Add a line when you use a tool that isn't covered. `claims:` adds conclusion phrases that count as a "done" claim.
+`match:` lines (one regex each, any can match) list the commands that change infrastructure, including `docker` writes
+run on another host over `ssh` (local `docker` is not matched). The guard hook stops each of these and asks the user
+first; for the done-gate, a turn that ran one (or edited files) is a **change**, any other turn is an
+**investigation**. Add a line when you use a tool that isn't covered. `### gate: protect` lists files whose edits
+always ask: the guard's hooks, settings and these rules. `claims:` adds conclusion phrases that count as a "done"
+claim.
 
 ### gate: change
 match: \b(terraform|tofu|terragrunt)\s+(.*\s)?(apply|destroy|import|taint|untaint|force-unlock|state\s+(rm|mv|push|replace-provider)|workspace\s+delete)\b
@@ -151,6 +163,7 @@ match: \bgovc\s+(vm\.(power|destroy|create|change|clone|migrate)|snapshot\.(crea
 match: \brestic\s+(.*\s)?(forget|prune|restore|unlock)\b|\bborg\s+(.*\s)?(delete|prune|compact|extract)\b
 match: \.(create|delete|update|put|modify|terminate|start|stop|reboot|restore|attach|detach|associate|disassociate|run|invoke|rotate|purge|import)_[a-z0-9_]+\(|\bbegin_(create|delete|update|start|stop|restart|deallocate)[a-z_]*\(
 match: \bcurl\b.*--aws-sigv4|\b(az\s+rest|gcloud\s+.*--impersonate)\b.*--method\s+(put|post|patch|delete)\b
+match: \bssh\b.*\bdocker(\s+compose|-compose)?\s+(.*\s)?(down|up|restart|stop|start|rm|rmi|kill|exec|run|pull|create|scale|update|prune|cp)\b|\bdocker\s+(-H|--host)[\s=]*ssh://\S+\s+(.*\s)?(compose\s+)?(down|up|restart|stop|start|rm|rmi|kill|exec|run|pull|create|scale|update|prune|cp)\b
 - Before running it, did you show the user what you found, the fix, the risks and how to undo it, in plain words,
   and get a clear yes for these exact commands?
 - Which environment and account/subscription/project did this run against? Did you check the workspace, backend and
@@ -181,6 +194,9 @@ match: \bdoctl\s+(auth\s+token|kubernetes\s+cluster\s+kubeconfig\s+show|database
 match: \bkubectl\s+get\s+secrets?\b.*(-o|--output)[\s=]*(yaml|json|jsonpath|go-template)|\bkubectl\s+config\s+view\b.*--raw
 match: \b(terraform|tofu)\s+((output|show)\s+[^|]*-json(?![^|]*\|)|output\s+[^|]*-raw|state\s+pull(?![^|]*\|))
 match: (^|[;&|]\s*)(printenv|env|set|export\s+-p|declare\s+-x)\s*($|[;&|])
+
+### gate: protect
+files: (^|/)\.claude/settings(\.local)?\.json$|(^|/)\.claude/hooks/|(^|/)\.claude/goodbehavior/profiles/
 
 ### gate: investigation
 claims: root cause|the cause (is|was)|caused by|the (issue|problem) (is|was)|it'?s because|that'?s why|explains (it|the)

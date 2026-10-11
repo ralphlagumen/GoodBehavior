@@ -186,15 +186,27 @@ PROJECT_BASH = [
     ("terraform output -json | jq keys", "pass"), ("printenv", "deny"), ("kubectl get secret db -o yaml", "deny"),
     ("gcloud auth print-access-token", "deny"), ("az keyvault secret show --vault-name v -n s", "deny"),
 ]
-PROJECT_TOOLS = [("Read", ".env", "deny"), ("Read", ".secret", "deny"), ("Read", ".env.example", "pass"),
+PROJECT_BASH += [
+    ("ssh -F none dr-host1 'sudo docker compose down'", "ask"), ("ssh dr-host1 docker restart web", "ask"),
+    ("docker -H ssh://dr-host1 compose up -d", "ask"), ("ssh dr-host1 docker ps", "pass"),
+    ("ssh dr-host1 'docker compose logs --tail 50'", "pass"), ("docker compose down", "pass"),
+    ("docker run --rm alpine echo hi", "pass"), ("docker compose up -d", "pass"),
+    ("sed -i 's/ask/allow/' .claude/hooks/done-gate.py", "ask"), ("echo '{}' > .claude/settings.json", "ask"),
+    ("rm .claude/hooks/done-gate.py", "ask"), ("cp /tmp/x .claude/goodbehavior/profiles/devops.md", "ask"),
+    ("python3 -c \"open('.claude/settings.local.json','w').write('{}')\"", "ask"),
+    ("cat .claude/settings.json", "pass"), ("echo 'TF_IN_AUTOMATION=1' >> Makefile.local", "pass"),
+]
+PROJECT_TOOLS = [("Edit", ".claude/settings.json", "ask"), ("Write", ".claude/hooks/done-gate.py", "ask"),
+                 ("Edit", ".claude/goodbehavior/profiles/devops.md", "ask"), ("Edit", "Makefile", "pass"),
+                 ("Read", ".env", "deny"), ("Read", ".secret", "deny"), ("Read", ".env.example", "pass"),
                  ("Read", "~/.aws/credentials", "deny"), ("Read", "Makefile", "pass"), ("Grep", ".secret", "deny"),
-                 ("Edit", ".env", "pass")]
+                 ("Edit", ".env", "pass"), ("Read", ".claude/settings.json", "pass")]
 
 
-def run_tool(tool, tool_input, project_dir, cwd):
+def run_tool(tool, tool_input, project_dir, cwd, mode="default"):
     env = dict(os.environ, CLAUDE_PROJECT_DIR=project_dir)
     r = subprocess.run([sys.executable, HOOK], env=env, capture_output=True, text=True,
-                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "permission_mode": mode,
                                          "tool_input": tool_input, "cwd": cwd}))
     out = json.loads(r.stdout) if r.stdout.strip() else {}
     return out.get("hookSpecificOutput", {}).get("permissionDecision", "pass")
@@ -240,6 +252,13 @@ def main():
     bad += [f"{tool} {path}: want {w}, got {g}" for tool, path, w in PROJECT_TOOLS
             if (g := run_tool(tool, {"file_path": os.path.expanduser(path) if path.startswith("~") else os.path.join(project, path)},
                               profile_dir, project)) != w]
+    # with permissions bypassed an "ask" may be skipped by the harness, so it must become a deny; passes stay passes
+    for tool, inp, want in [("Edit", {"file_path": os.path.join(project, ".claude/hooks/done-gate.py")}, "deny"),
+                            ("Bash", {"command": "make infra_apply"}, "deny"),
+                            ("Bash", {"command": "make infra_plan"}, "pass"), ("Read", {"file_path": os.path.join(project, ".env")}, "deny")]:
+        got = run_tool(tool, inp, profile_dir, project, mode="bypassPermissions")
+        if got != want:
+            bad.append(f"bypassPermissions {tool} {inp}: want {want}, got {got}")
     print(f"  {'PASS' if not bad else 'FAIL'}  guard: make targets, scripts, inline code and secrets "
           f"({len(PROJECT_BASH) + len(PROJECT_TOOLS)} cases)")
     for b in bad:

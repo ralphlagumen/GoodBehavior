@@ -3,6 +3,24 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — guard: protects itself, docker over ssh, deny when permissions are bypassed
+
+- **Self-protection:** a new `### gate: protect` section lists files whose edits always ask: `.claude/settings*.json`,
+  `.claude/hooks/`, `.claude/goodbehavior/profiles/`. Covers the Edit/Write tools and shell writes (redirects,
+  `cp`/`mv`/`rm`/`tee`, `sed -i`, inline code). Reading them is fine.
+- **Docker over SSH:** `docker`/`docker compose` writes (`down`, `up`, `restart`, `rm`, `exec`, ...) run on another
+  host through `ssh` or `docker -H ssh://` ask. Local docker is not matched.
+- **Bypass mode:** observed live, Claude Code skipped a hook's "ask" for Edit under `--dangerously-skip-permissions`
+  (Bash asks held). Hooks receive `permission_mode`, so under `bypassPermissions` every "ask" becomes "deny", with a
+  note telling Claude to explain the step to the user instead.
+- `install.py` wires the guard on `Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit`. **Existing adopters:** widen
+  the PreToolUse matcher for `done-gate.py` in `settings.json` by hand.
+- `devops.md` **suggests** (does not require) keeping `AWS_PROFILE`, region, subscription and project settings in the
+  project's `.env`, so commands don't need prefixes and a one-off override stands out.
+- Tested: 20 more guard cases (docker over ssh vs local, self-protection by every write route, bypass-mode denies);
+  real `claude -p` with permissions skipped: editing the hook was blocked and the file left unchanged, `make
+  infra_apply` blocked, a harmless command ran.
+
 ## 2026-10-11 — devops: guard sees inside make/scripts, protects secrets; security in every audit
 
 - **Guard** (`done-gate.py`, PreToolUse): follows `make` targets (prerequisites, variables, includes, recursive

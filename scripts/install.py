@@ -17,7 +17,7 @@ Plan format (written by the adopt skill after the user confirms):
   "skills":   ["audit-goodbehavior", "verify-goodbehavior", ...],   # skill DIR names to copy
   "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five;
                                              # guides go as "<profile>/<guide>", e.g. "devops/baseline"
-  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(Bash|Read|Grep)
+  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(Bash|Read|Grep|Edit|Write)
   "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", ... }   # target-rel -> source-rel
 }
 
@@ -79,7 +79,7 @@ def plan_files(plan):
 
 
 def wire_settings(target, dry_run, report):
-    """Merge the hook wiring (Stop, PreToolUse on Bash|Read|Grep) into <target>/.claude/settings.json without
+    """Merge the hook wiring (Stop, PreToolUse on Bash|Read|Grep|Edit|Write) into <target>/.claude/settings.json without
     touching anything else. Each event is wired once; an existing done-gate entry is left alone."""
     path = os.path.join(target, ".claude", "settings.json")
     settings = {}
@@ -91,7 +91,7 @@ def wire_settings(target, dry_run, report):
             report["warnings"].append(f"settings.json exists but is not valid JSON — left untouched: {path}")
             return
     added = []
-    for event, matcher in (("Stop", None), ("PreToolUse", "Bash|Read|Grep")):
+    for event, matcher in (("Stop", None), ("PreToolUse", "Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit")):
         entries = settings.setdefault("hooks", {}).setdefault(event, [])
         if any("done-gate.py" in h.get("command", "") for e in entries for h in e.get("hooks", [])):
             report["skipped"].append(f".claude/settings.json ({event} hook already wired)")
