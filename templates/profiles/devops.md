@@ -121,7 +121,15 @@ Before running anything that changes infrastructure, show the user this and wait
 6. **Where it runs:** environment and account/subscription/project.
 7. **Cost:** what this changes in the monthly bill, and any cheaper option with the same performance (see "Cost in
    every proposal" below).
-8. **Your call:** "Do you want me to run this?" Then stop. No yes, no change.
+8. **Your call:** ask with the question picker (AskUserQuestion), options **"Yes, run it"** and **"No"** (the user
+   can always pick Other). No yes, no change.
+
+**Running it after a yes.** When the guard stops a command, its message carries a token like `[run:3f9c…]`. Put that
+token in the AskUserQuestion question, with the explanation above (for a script: what it is for and what each risky
+step does). If the user picks "Yes, run it", run the exact same command again, unchanged: the guard finds the yes in
+the session transcript and lets it run once. Don't hand the user a script to run themselves unless they ask for that.
+A new message from the user, a second run, or any edit to the script after the yes needs a new yes. Secrets stay
+denied whatever the answer.
 
 ## Cost in every proposal
 

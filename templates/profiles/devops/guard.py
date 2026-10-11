@@ -123,6 +123,8 @@ def is_protected(path, cwd):
     for c in (real, os.path.abspath(os.path.join(cwd, os.path.expanduser(path)))):
         if any(m in c + "/" for m in PROTECTED_PARTS) or c.endswith("/.claude"):
             return True
+        if "/.claude/projects/" in c and c.endswith(".jsonl"):
+            return True  # session transcripts hold the user's answers, which grant consent
         if os.path.basename(c) in PROTECTED_BASENAMES:
             return True
         if os.path.dirname(c) in path_dirs():
@@ -1769,10 +1771,13 @@ def classify(payload):
     what, why, level = hit
     if level == "ask" and any(p.search(command.strip()) for p in project_allow(payload)):
         return None  # the user listed this command as trusted (.claude/goodbehavior/guard-allow.txt)
+    if level == "ask":
+        token = consent_token(command, cwd)
+        if consent_given(payload, token, command):
+            return "consented", "the user said yes to [run:%s]" % token
     if level == "deny":
         return "deny", "BLOCKED: %s %s. Use the value without printing it, or ask the user to look." % (what, why)
-    return "ask", ("%s %s. Approve only if Claude has explained, in plain words, why it needs to run, what could "
-                   "break and how to undo it." % (what, why))
+    return "ask", ("%s %s." % (what, why) + CONSENT_HOWTO.format(token=consent_token(command, cwd)))
 
 
 def project_allow(payload):
@@ -1790,8 +1795,111 @@ def project_allow(payload):
     return out
 
 
-BYPASS_NOTE = (" Permissions are bypassed in this session, so this can't be approved here: explain it to the user, "
-               "who can run it themselves or approve it in a normal permission mode.")
+import hashlib  # noqa: E402
+
+
+def local_scripts(toks, cwd):
+    """Local files a command segment would execute: `./x.sh`, `bash x.sh`, `python3 x.py`, `make -f x.mk`."""
+    while toks and ASSIGNMENT.match(toks[0]):
+        toks = toks[1:]
+    if not toks:
+        return []
+    head = os.path.basename(toks[0])
+    cands = [toks[0]] if "/" in toks[0] else []
+    if head in SHELL_BINARIES | {"python", "python3", "node", "bats"}:
+        cands += [t for t in toks[1:] if not t.startswith("-")][:1]
+    if head in {"make", "gmake"}:
+        cands += [os.path.join(cwd, "Makefile")]
+    out = []
+    for c in cands:
+        real = resolve(c, cwd)
+        if real and os.path.isfile(real):
+            out.append(real)
+    return out
+
+
+def consent_token(command, cwd):
+    """Ties a yes to this exact command and the current contents of any local script it runs."""
+    h = hashlib.sha256(command.strip().encode())
+    try:
+        segs, _ = split_shell(extract_heredocs(command)[0])
+    except ValueError:
+        segs = []
+    for seg in segs:
+        try:
+            toks = shlex.split(seg)
+        except ValueError:
+            continue
+        for path in local_scripts(toks, cwd):
+            h.update((read_text(path) or "").encode())
+    return h.hexdigest()[:12]
+
+
+def transcript_entries(payload):
+    path = payload.get("transcript_path") or ""
+    out = []
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def _blocks(entry):
+    msg = entry.get("message") or {}
+    content = msg.get("content")
+    return content if isinstance(content, list) else []
+
+
+def _is_human(entry):
+    msg = entry.get("message") or {}
+    if (entry.get("type") or msg.get("role")) != "user":
+        return False
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    return any(isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip() for b in content or [])
+
+
+def consent_given(payload, token, command):
+    """True when, since the user's last message, they answered "Yes…" to an AskUserQuestion carrying
+    [run:<token>], and the command hasn't already run on that yes."""
+    entries = transcript_entries(payload)
+    last_human = max([i for i, e in enumerate(entries) if _is_human(e)] or [-1])
+    asked, approved_at = {}, None
+    for i, e in enumerate(entries[last_human + 1:], start=last_human + 1):
+        for b in _blocks(e):
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                qs = [q.get("question", "") for q in (b.get("input") or {}).get("questions", []) if isinstance(q, dict)]
+                hits = [q for q in qs if "[run:%s]" % token in q]
+                if hits:
+                    asked[b.get("id")] = hits
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in asked:
+                answers = (e.get("toolUseResult") or {}).get("answers") or {}
+                if any(str(answers.get(q, "")).strip().lower().startswith("yes") for q in asked[b.get("tool_use_id")]):
+                    approved_at = i
+    if approved_at is None:
+        return False
+    runs = sum(1 for e in entries[approved_at + 1:] for b in _blocks(e)
+               if isinstance(b, dict) and b.get("type") == "tool_use"
+               and str((b.get("input") or {}).get("command", "")).strip() == command.strip())
+    return runs <= 1  # the call being checked may already be in the transcript; a second run needs a new yes
+
+
+CONSENT_HOWTO = (" To run it, ask the user with AskUserQuestion: put [run:{token}] in the question, explain in plain "
+                 "words what the command or script does, why it's needed, what could break and how to undo it, and "
+                 "offer the options \"Yes, run it\" and \"No\". If they choose Yes, run the exact same command again, "
+                 "unchanged. If AskUserQuestion isn't available (a non-interactive run), explain it and ask the user "
+                 "to run it themselves.")
+
+
+BYPASS_NOTE = (" (Permissions are bypassed in this session, so the permission prompt can't be used; ask with "
+               "AskUserQuestion as above.)")
 
 
 def log(payload, decision, reason):
@@ -1817,6 +1925,9 @@ def decide(payload):
     if result is None:
         return None
     decision, reason = result
+    if decision == "consented":
+        log(payload, "consented", reason)
+        return None
     if decision == "ask" and payload.get("permission_mode") == "bypassPermissions":
         decision, reason = "deny", reason + BYPASS_NOTE
     log(payload, decision, reason)

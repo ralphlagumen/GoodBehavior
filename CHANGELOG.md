@@ -47,6 +47,12 @@ and a guard that lets investigation run but stops changes and secret leaks.
   dumps, kubeconfigs: `files/kubeconfig`, anything in a `.kubeconfig/` folder or named `*kubeconfig*`).
 - Fails closed on a crash; turns every ask into a deny when permissions are bypassed (Claude Code was seen skipping
   a hook's ask for Edit in that mode); logs every ask and deny to `.claude/goodbehavior/guard.log`.
+- **Run after a yes:** when the guard stops a command, its message gives a token (`[run:…]`). Claude asks with the
+  question picker (Yes, run it / No / Other), explaining what the command or script does and what could break; if
+  the user picks Yes, the guard finds that answer in the session transcript and lets the exact command run once.
+  The token covers the command and the contents of any script it runs, so editing the script voids the yes; a new
+  user message, or a second run, needs a new yes. Works in bypass mode, where a plain ask can't be shown. Session
+  transcripts are protected so an answer can't be forged; secrets stay denied.
 - Trusted commands: regexes in a project's `.claude/goodbehavior/guard-allow.txt` turn an ask into a run (never a
   deny into a run). Test files (`bats`, `node`) are read before running; inside them, `PATH` mocks and arithmetic
   are tolerated.

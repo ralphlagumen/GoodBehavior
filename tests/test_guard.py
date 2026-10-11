@@ -604,6 +604,64 @@ def main():
     expect("allow list: unlisted ask still asks", "ask", bash("make release", PROJECT))
     expect("allow list: never lifts a deny", "deny", bash("cat .env", PROJECT))
     os.remove(allow_file)
+    # consent: the user's own "Yes" to an AskUserQuestion carrying [run:<token>] lets that exact command run once
+    import re as _re
+
+    def reason(command, transcript=None, mode="bypassPermissions"):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": PROJECT, "hook_event_name": "PreToolUse",
+                   "permission_mode": mode}
+        if transcript:
+            payload["transcript_path"] = transcript
+        r = subprocess.run([sys.executable, GUARD], input=json.dumps(payload), capture_output=True, text=True,
+                           env=dict(os.environ, HOME=HOME, CLAUDE_PROJECT_DIR=PROJECT))
+        if not r.stdout.strip():
+            return "allow", ""
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        return out["permissionDecision"], out["permissionDecisionReason"]
+
+    def transcript(name, token, answer, after=()):
+        q = "Run `bash scripts/launch.sh` to start replication? [run:%s]" % token
+        rows = [{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "start it"}]}},
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {"questions": [
+                        {"question": q, "header": "Run", "multiSelect": False,
+                         "options": [{"label": "Yes, run it"}, {"label": "No"}]}]}}]}},
+                {"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+                 "toolUseResult": {"questions": [], "answers": {q: answer}}}] + list(after)
+        path = os.path.join(TMP, name + ".jsonl")
+        with open(path, "w") as f:
+            f.write("\n".join(json.dumps(r) for r in rows) + "\n")
+        return path
+
+    def bash_use(command):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "b%d" % abs(hash(command)), "name": "Bash", "input": {"command": command}}]}}
+
+    cmd = "bash scripts/launch.sh"
+    dec, why = reason(cmd)
+    token = (_re.search(r"\[run:([0-9a-f]+)\]", why) or [None, ""])[1]
+    expect("consent: the deny explains how to ask, with a token", True, dec == "deny" and bool(token) and "AskUserQuestion" in why)
+    expect("consent: Yes lets it run (bypass mode)", "allow", reason(cmd, transcript("yes", token, "Yes, run it", [bash_use(cmd)]))[0])
+    expect("consent: Yes lets it run (default mode, no second prompt)", "allow",
+           reason(cmd, transcript("yes2", token, "Yes, run it", [bash_use(cmd)]), mode="default")[0])
+    expect("consent: No does not", "deny", reason(cmd, transcript("no", token, "No"))[0])
+    expect("consent: a yes for another command does not", "deny", reason(cmd, transcript("other", "0" * 12, "Yes, run it"))[0])
+    expired = [{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "actually wait"}]}}]
+    expect("consent: a new user message expires it", "deny", reason(cmd, transcript("expired", token, "Yes, run it", expired))[0])
+    expect("consent: one yes, one run", "deny",
+           reason(cmd, transcript("twice", token, "Yes, run it", [bash_use(cmd), bash_use(cmd)]))[0])
+    with open(os.path.join(PROJECT, "scripts/launch.sh"), "a") as f:
+        f.write("aws ec2 terminate-instances --instance-ids i-2\n")  # script changed after the yes
+    expect("consent: editing the script after the yes voids it", "deny",
+           reason(cmd, transcript("edited", token, "Yes, run it", [bash_use(cmd)]))[0])
+    sec_token = "0" * 12
+    expect("consent: never lifts a secret deny", "deny", reason("cat .env", transcript("sec", sec_token, "Yes, run it"))[0])
+    expect("consent: transcripts can't be written", "ask",
+           run({"tool_name": "Write", "tool_input": {"file_path": os.path.join(HOME, ".claude/projects/-p/abc.jsonl")}}, PROJECT))
+    expect("consent: memory files can", "allow",
+           run({"tool_name": "Write", "tool_input": {"file_path": os.path.join(HOME, ".claude/projects/-p/memory/x.md")}}, PROJECT))
+
     # bypass mode: ask becomes deny; allow stays allow
     expect("bypass: make infra_apply", "deny", bash("make infra_apply", PROJECT, mode="bypassPermissions"))
     expect("bypass: make infra_plan", "allow", bash("make infra_plan", PROJECT, mode="bypassPermissions"))
@@ -617,7 +675,7 @@ def main():
         entries = [json.loads(line) for line in f]
     expect("decision log has asks and denies", True, {"ask", "deny"} <= {e["decision"] for e in entries})
 
-    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 8
+    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 19
     for f_ in failures:
         print("  FAIL  " + f_)
     print("  %s  guard: %d/%d decisions as expected" % ("PASS" if not failures else "FAIL", total - len(failures), total))
