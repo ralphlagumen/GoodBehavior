@@ -42,7 +42,7 @@ gets "ask". Anything else runs. No gate sections → no-op.
 
 Wire as a Stop hook (and a PreToolUse hook for Bash) in .claude/settings.json. Requires only python3.
 """
-import os, sys, json, re, shlex
+import glob, importlib.util, os, sys, json, re, shlex
 
 # Tools whose use means the turn did real build work (lowercased) — arms the gate.
 BUILD_TOOLS = {"edit", "write", "multiedit", "notebookedit", "applypatch", "bash"}
@@ -104,7 +104,8 @@ def main():
         sys.exit(0)  # never break the session on a parse error
 
     if data.get("hook_event_name") == "PreToolUse":
-        guard(data)
+        if not profile_guard(data):
+            guard(data)
         sys.exit(0)
 
     # Don't re-fire on our own continuation (avoids an infinite stop loop).
@@ -475,6 +476,28 @@ def decide(out, decision, reason, mode=None):
         decision, reason = "deny", reason + BYPASS_NOTE
     json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                       "permissionDecisionReason": reason}}, out)
+
+
+def profile_guard(data):
+    """Hand the call to a profile's own guard (.claude/goodbehavior/profiles/**/guard.py) when one is installed.
+    True when one handled it. Loading or running it must never fail open: any error denies."""
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or ""
+    found = sorted(glob.glob(os.path.join(root, ".claude", "goodbehavior", "profiles", "**", "guard.py"),
+                             recursive=True)) if root else []
+    if not found:
+        return False
+    try:
+        spec = importlib.util.spec_from_file_location("profile_guard", found[0])
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        result = module.decide(data)
+    except Exception as exc:  # noqa: BLE001 — fail closed
+        result = ("deny", "GoodBehavior guard: the profile guard failed to load (%s: %s), so this could not "
+                  "be checked." % (type(exc).__name__, exc))
+    if result:
+        json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": result[0],
+                                          "permissionDecisionReason": result[1]}}, sys.stdout)
+    return True
 
 
 def guard(data):

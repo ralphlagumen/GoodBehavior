@@ -43,9 +43,10 @@ Then resolve the **profile** from `<source>/templates/profiles/`:
    `analysis`, evidence ← `analysis`. State the resolved slots explicitly.
 4. **Profile guides.** If a resolved profile has a guide folder next to it (today: `devops/`), its body names the
    guides. Ask which platforms and tools the project uses, then add the always-on guide plus one per platform or tool
-   in use, as
-   `<profile>/<guide>` entries in the plan's `profiles` list (e.g. `"devops"`, `"devops/baseline"`, plus the platform
-   guide). Read only those guide files. A platform with no guide gets the baseline only; say so in the proposal.
+   in use, as `<profile>/<guide>` entries in the plan's `profiles` list (e.g. `"devops"`, `"devops/baseline"`, plus
+   the platform guide). Read only those guide files. A platform with no guide gets the baseline only; say so in the
+   proposal. If the profile ships a guard (`devops/guard.py`), add it as a `profiles` entry too, with `"hook": true`:
+   the done-gate hook hands every tool call to it.
 5. **Custom fallback — never decline.** If nothing fits, elicit the three slots directly from the user ("what's the real
    thing, how would you check it's right, what counts as proof?") and write a custom profile. adopt must never say the
    method "isn't for this project."

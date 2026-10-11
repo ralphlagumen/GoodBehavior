@@ -68,11 +68,27 @@ We suggest keeping the values that pick an account or a tool in the project's `.
 against the same, visible account, and a one-off `AWS_PROFILE=admin aws ...` stands out. Actual secrets go in
 `.secret` (see Secrets). This is a suggestion; follow the project's own convention if it has one.
 
+## The guard
+
+`devops/guard.py` runs before every tool call (the done-gate hook hands each call to it). It works like a
+default-deny guard with a softer default:
+- **Runs** what it can show is read-only or local: cloud reads (`describe`, `list`, `get`), plans and tests,
+  scanners, local git commits, local docker, SSM port-forward tunnels, `ssh -N -L` tunnels, and ssh commands whose
+  every part reads (logs, status, files), pipes included. It reads `make` recipes (prerequisites, variables, `.env`,
+  recursive make), scripts and the scripts they source, package scripts and inline Python before deciding.
+- **Asks you right away**, saying what it found and why, for anything that changes something or that it can't show
+  is safe: infrastructure writes, remote changes over ssh, unknown programs, `eval`, unparseable lines, edits to
+  `.claude/`, `.mcp.json`, the lock file or scanner config.
+- **Denies** anything that would show a secret (credential files, `.env`/`.secret`, secret-manager reads, token
+  printers, state dumps, `docker inspect` without `--format`), and anything it crashed on. With permissions bypassed,
+  every ask becomes a deny.
+- Logs every ask and deny to `.claude/goodbehavior/guard.log` (we suggest adding it to `.gitignore`).
+It is a speed bump, not a sandbox: the credential the session runs with is the real boundary.
+
 ## Running scripts and make targets
 
 Assess the risk before running anything that wraps other commands (a script, a `make` target, inline code):
-- Read it first. The guard also reads it: it follows `make` targets, their prerequisites and recursive `make` calls,
-  scripts (shell, Python, Node, Ruby, Perl) and inline code, a few levels deep.
+- Read it first. The guard reads it too, and asks when it finds a change or a secret.
 - **Harmless** (it only reads, builds, tests, plans or prints non-secret output): run it.
 - **Risky** (it changes infrastructure, deletes or overwrites data, or touches secrets): don't run it yet. Tell the
   user, in plain words, why it needs to run, what it will change, what could go wrong, and what it fixes. Then ask.
@@ -139,10 +155,10 @@ safely).
 ## Done-gate questions
 
 The done-gate hook asks these in place of its generic self-check when this profile is installed. Edit them freely.
-`match:` lines (one regex each, any can match) list the commands that change infrastructure, including `docker` writes
-run on another host over `ssh` (local `docker` is not matched). The guard hook stops each of these and asks the user
-first; for the done-gate, a turn that ran one (or edited files) is a **change**, any other turn is an
-**investigation**. Add a line when you use a tool that isn't covered. `### gate: protect` lists files whose edits
+`match:` lines (one regex each, any can match) list the commands that change infrastructure. For the done-gate, a
+turn that ran one (or edited files) is a **change**, any other turn is an **investigation**. Without `guard.py`
+installed, the hook also falls back to these lines, plus `### gate: secrets` and `### gate: protect`, as a simpler
+text-matching guard. Add a line when you use a tool that isn't covered. `### gate: protect` lists files whose edits
 always ask: the guard's hooks, settings and these rules. `claims:` adds conclusion phrases that count as a "done"
 claim.
 

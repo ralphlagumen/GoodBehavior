@@ -3,6 +3,36 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-12 — devops guard.py: default-deny parsing, looser default (ask), secrets denied
+
+The red-team audit found the text-matching guard bypassable (29 confirmed routes) and failing open. This replaces it
+for devops projects with `templates/profiles/devops/guard.py`, adapted from a hand-built default-deny guard an adopter
+wrote after unasked applies. Same parser and default (a command runs only when every part is shown to be read-only
+or local), softer outcome: anything else **asks** instead of being denied, so investigation isn't blocked.
+
+- **Runs:** cloud reads (aws/az/gcloud/doctl/kubectl/helm), plan/test/validate, scanners, local git commits, local
+  docker, SSM port-forward tunnels, `ssh -N -L` tunnels, ssh with the user's own config, and ssh commands whose every
+  part reads (pipes included). Reads `make` recipes (prerequisites, variables, `.env` includes, recursive make,
+  `$(shell)`), scripts and what they source, package scripts and inline Python before deciding. Tracks `cd` and
+  simple variables (`X=literal`, `X=$(mktemp -d)`) across a command line.
+- **Asks** (right away, saying what it found): infrastructure writes, remote changes over ssh, unknown programs,
+  `eval`, arithmetic tricks, unparseable lines, edits to `.claude/`, `.mcp.json`, git hooks/config, the lock file,
+  `.terraform/`, scanner config.
+- **Denies:** anything that would show a secret — credential files (symlinks and globs resolved), `.env`/`.secret`,
+  recursive greps that would reach them (`grep -R`/`rg -L` follow symlinks; `grep -r`/`rg` don't), secret-manager and
+  token commands (aws/az/gcloud/doctl, vault, op, sops, gh), `terraform output -json|-raw|<name>`, `state pull`,
+  `docker inspect` without `--format`, `docker exec … env`. Also denies on any crash (fail closed), and turns every
+  ask into a deny when permissions are bypassed.
+- **Logs** every ask and deny to `.claude/goodbehavior/guard.log` (permission mode included; no secret values).
+- `done-gate.py` hands PreToolUse to an installed `profiles/**/guard.py`; a guard that fails to load denies. Without
+  one, the old text-matching guard still applies. `install.py` wires PreToolUse on `*` (so `Monitor` and MCP tools
+  reach it) and accepts `devops/guard.py` as a profile entry; `adopt` adds it with the devops profile.
+- Tests: `tests/test_guard.py` (517 decisions: 396 identity-stripped cases from the adopter's bypass suite with the
+  intended loosenings, the red-team routes, make/scripts/package scripts, Terraform escape hatches, tools, bypass
+  mode, fail-closed, the log). Live with `claude -p` in bypass and acceptEdits modes: `make infra_plan` ran, `make
+  infra_apply` stopped with the hidden line named, `Read .env` denied, an ssh read passed the guard; four log lines,
+  no secret in them.
+
 ## 2026-10-11 — guard: protects itself, docker over ssh, deny when permissions are bypassed
 
 - **Self-protection:** a new `### gate: protect` section lists files whose edits always ask: `.claude/settings*.json`,

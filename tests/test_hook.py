@@ -242,6 +242,23 @@ def main():
     failures += bool(guard_bad)
     cases += [None]
 
+    # done-gate hands PreToolUse to an installed profile guard (guard.py), and fails closed if it is broken
+    gdir = tempfile.mkdtemp()
+    os.makedirs(os.path.join(gdir, ".claude", "goodbehavior", "profiles", "devops"))
+    guard_src = os.path.join(os.path.dirname(__file__), "..", "templates", "profiles", "devops", "guard.py")
+    gpath = os.path.join(gdir, ".claude", "goodbehavior", "profiles", "devops", "guard.py")
+    shutil.copy(guard_src, gpath)
+    deleg = [run_tool("Bash", {"command": "terraform apply"}, gdir, gdir) == "ask",
+             run_tool("Bash", {"command": "cat .env"}, gdir, gdir) == "deny",
+             run_tool("Bash", {"command": "ls"}, gdir, gdir) == "pass"]
+    with open(gpath, "w") as f:
+        f.write("raise RuntimeError('broken guard')\n")
+    deleg.append(run_tool("Bash", {"command": "ls"}, gdir, gdir) == "deny")
+    print(f"  {'PASS' if all(deleg) else 'FAIL'}  done-gate delegates to the profile guard and fails closed if it breaks")
+    failures += not all(deleg)
+    cases += [None]
+    shutil.rmtree(gdir, ignore_errors=True)
+
     project = tempfile.mkdtemp()
     for rel, body in PROJECT_FILES.items():
         os.makedirs(os.path.dirname(os.path.join(project, rel)), exist_ok=True)

@@ -83,8 +83,8 @@ def main():
         check("Stop hook wired exactly once", wired == 1)
         pre = settings["hooks"].get("PreToolUse", [])
         guard = [e for e in pre for h in e.get("hooks", []) if "done-gate" in h.get("command", "")]
-        check("PreToolUse guard wired exactly once, on Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit",
-              len(guard) == 1 and guard[0].get("matcher") == "Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit")
+        check("PreToolUse guard wired exactly once, on every tool",
+              len(guard) == 1 and guard[0].get("matcher") == "*")
 
         # idempotency: re-run must create nothing new and not double-wire
         report2 = run_install(plan_path)
@@ -102,7 +102,7 @@ def main():
         plan_path = os.path.join(target, "plan.json")
         with open(plan_path, "w") as f:
             json.dump({"source": ROOT, "target": target, "skills": [],
-                       "profiles": ["devops", "devops/baseline"], "hook": False, "templates": {}}, f)
+                       "profiles": ["devops", "devops/baseline", "devops/guard.py"], "hook": False, "templates": {}}, f)
         run_install(plan_path)
         guide = os.path.join(target, ".claude/goodbehavior/profiles/devops/baseline.md")
         check("guide copied byte-identical",
@@ -110,6 +110,9 @@ def main():
         with open(os.path.join(target, ".claude/goodbehavior/manifest.json")) as f:
             entry = json.load(f)["files"].get(".claude/goodbehavior/profiles/devops/baseline.md", {})
         check("manifest tracks the guide's source path", entry.get("from") == "templates/profiles/devops/baseline.md")
+        g = os.path.join(target, ".claude/goodbehavior/profiles/devops/guard.py")
+        check("guard.py installed as-is (no .md added)",
+              os.path.isfile(g) and sha256(g) == sha256(os.path.join(ROOT, "templates/profiles/devops/guard.py")))
 
     print(f"test_install: {'FAILED: ' + '; '.join(failures) if failures else 'all passed'}")
     return 1 if failures else 0

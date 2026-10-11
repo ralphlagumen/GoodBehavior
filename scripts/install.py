@@ -17,7 +17,7 @@ Plan format (written by the adopt skill after the user confirms):
   "skills":   ["audit-goodbehavior", "verify-goodbehavior", ...],   # skill DIR names to copy
   "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five;
                                              # guides go as "<profile>/<guide>", e.g. "devops/baseline"
-  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(Bash|Read|Grep|Edit|Write)
+  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(*)
   "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", ... }   # target-rel -> source-rel
 }
 
@@ -66,10 +66,11 @@ def plan_files(plan):
                 rel = os.path.relpath(full, src)
                 yield rel, rel
     for profile in plan.get("profiles", []):
-        src_rel = os.path.join("templates", "profiles", f"{profile}.md")
+        name = profile if os.path.splitext(profile)[1] else f"{profile}.md"  # e.g. "devops/guard.py" as-is
+        src_rel = os.path.join("templates", "profiles", name)
         if not os.path.isfile(os.path.join(src, src_rel)):
             raise SystemExit(f"error: profile not found in source: {profile}")
-        yield os.path.join(".claude", "goodbehavior", "profiles", f"{profile}.md"), src_rel
+        yield os.path.join(".claude", "goodbehavior", "profiles", name), src_rel
     for tgt_rel, src_rel in plan.get("templates", {}).items():
         if not os.path.isfile(os.path.join(src, src_rel)):
             raise SystemExit(f"error: template not found in source: {src_rel}")
@@ -79,7 +80,7 @@ def plan_files(plan):
 
 
 def wire_settings(target, dry_run, report):
-    """Merge the hook wiring (Stop, PreToolUse on Bash|Read|Grep|Edit|Write) into <target>/.claude/settings.json without
+    """Merge the hook wiring (Stop, PreToolUse on every tool) into <target>/.claude/settings.json without
     touching anything else. Each event is wired once; an existing done-gate entry is left alone."""
     path = os.path.join(target, ".claude", "settings.json")
     settings = {}
@@ -91,7 +92,7 @@ def wire_settings(target, dry_run, report):
             report["warnings"].append(f"settings.json exists but is not valid JSON — left untouched: {path}")
             return
     added = []
-    for event, matcher in (("Stop", None), ("PreToolUse", "Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit")):
+    for event, matcher in (("Stop", None), ("PreToolUse", "*")):
         entries = settings.setdefault("hooks", {}).setdefault(event, [])
         if any("done-gate.py" in h.get("command", "") for e in entries for h in e.get("hooks", [])):
             report["skipped"].append(f".claude/settings.json ({event} hook already wired)")

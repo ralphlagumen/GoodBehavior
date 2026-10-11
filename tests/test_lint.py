@@ -99,7 +99,8 @@ def main():
 
     # python artifacts compile
     with tempfile.TemporaryDirectory() as td:
-        for rel in (".claude/hooks/done-gate.py", "scripts/install.py", "scripts/update.py"):
+        for rel in (".claude/hooks/done-gate.py", "scripts/install.py", "scripts/update.py",
+                    "templates/profiles/devops/guard.py"):
             try:
                 py_compile.compile(os.path.join(ROOT, rel), doraise=True,
                                    cfile=os.path.join(td, os.path.basename(rel) + "c"))
