@@ -47,7 +47,8 @@ which host and environment you are on: `hostname -f` and the inventory group it 
 - **rule:** Central accounts (LDAP, FreeIPA or SSO), no shared logins, no root over SSH, no SSH passwords
   (baseline: SSO, MFA, root locked).
   **probe:** `sudo sshd -T | grep -Ei '^(permitrootlogin|passwordauthentication|pubkeyauthentication)'` shows
-  `permitrootlogin no`, `passwordauthentication no`, `pubkeyauthentication yes`.
+  `permitrootlogin no`, `passwordauthentication no`, `pubkeyauthentication yes`. Stock Debian 12 shows
+  `permitrootlogin without-password` and `passwordauthentication yes`, so a fresh server fails this until hardened.
 - **rule:** Least privilege for service and deploy users (baseline: each identity can do its job and nothing more).
   **probe:** `sudo -l -U <service-user>` lists only the commands it needs, never `(ALL) ALL`.
 
@@ -107,7 +108,8 @@ capacity nobody uses, and don't starve what is busy.
   **probe:** the hypervisor's VM list has an owner and environment in notes or tags; VMs with no owner go on a
   review list.
 - **rule:** VMs are sized from real use (baseline: not over-provisioned).
-  **probe:** 14+ days of history from the monitoring system, or `sar -u` and `sar -r` from sysstat, compared with
+  **probe:** 14+ days of history from the monitoring system, or `sar -u` and `sar -r` from sysstat (history exists
+  only if sysstat collection is enabled, e.g. `ENABLED="true"` in `/etc/default/sysstat` on Debian), compared with
   allocated vCPU and memory. Over-sized VMs waste host capacity and licenses that are often priced per core.
 - **rule:** Nothing runs hot (baseline: not under-provisioned).
   **probe:** load average above the core count (`uptime`, `nproc`), swap in use (`free -m`, `vmstat 5 3`),

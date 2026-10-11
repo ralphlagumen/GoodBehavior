@@ -3,6 +3,19 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops: guide commands checked in the self-test; on-prem Linux probes run
+
+- `tests/test_guide_cli.py`: every `aws`, `az`, `gcloud` and `doctl` command in the devops guides is parsed by the
+  real CLI with no credentials and no provider reach (fake keys, empty configs, a dead local endpoint for aws). A
+  command passes when it gets past parsing and stops at the missing login. CLIs that aren't installed are skipped.
+  Known non-commands are listed with a reason. Takes about 15 seconds; a broken command name or a missing required
+  argument fails it.
+- `devops/onprem.md`: the Linux-only probes were run in a Debian 12 container (`ss`, `nft`, `iptables`, `ufw`,
+  `sshd -T`, `sudo -l`, `journalctl`, `smartctl`, `chronyc`, `sar`, `logger`, `virsh`, `upsc`, `certbot`, and a
+  real `restic`/`borg` backup, check and restore, diffed identical); `govc` checked against govc 0.56. Two notes
+  added: stock Debian fails the SSH rule until hardened, and `sar` history needs sysstat collection enabled.
+  Proxmox `qm`/`pct`/`ha-manager` were reviewed, not run.
+
 ## 2026-10-11 — devops: provider guides (AWS, Azure, GCP, DigitalOcean, on-prem)
 
 - `templates/profiles/devops/{aws,azure,gcp,digitalocean,onprem}.md`: each maps every baseline area (IaC and state,

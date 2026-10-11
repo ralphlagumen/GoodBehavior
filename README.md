@@ -31,7 +31,7 @@ its files.
 | `/update-goodbehavior` | Pulls the latest bundle from its source repo and 3-way-merges it into the local copy, preserving project-local adaptations. | skill |
 | `.claude/hooks/done-gate.py` + `.claude/settings.json` | Stop hook: pushes back on "done" without evidence — including *behaviorally*: verification vocabulary is honored only if something was actually run/observed after the last file change that turn. A profile can supply its own questions (devops: change vs investigation). Also a PreToolUse guard: commands a profile marks as changes (devops: infra applies, deletes, restarts) need the user's approval. | enforcement |
 | `scripts/install.py` · `scripts/update.py` | The mechanical halves of adopt/update, deterministic: copy+hash+wire+manifest, and the git 3-way merge. The skills keep the judgment; the scripts keep the consistency. | tooling |
-| `tests/run_all.py` | The bundle held to its own standard: hook behavior, install round-trip, update merge paths, structural+drift lint — one command, all green before shipping. | self-test |
+| `tests/run_all.py` | The bundle held to its own standard: hook behavior, install round-trip, update merge paths, structural+drift lint, and every cloud CLI command in the devops guides parsed offline by the real CLI (skipped where a CLI isn't installed) — one command, all green before shipping. | self-test |
 
 Guidance shapes intent; **only the hook enforces** when intent slips. That's the point — the method failed before
 precisely because nothing stopped a lazy turn.
