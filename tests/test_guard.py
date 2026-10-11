@@ -520,6 +520,7 @@ PROJECT_CASES = [
     ("cat .env.example", "allow"), ("cat /proc/self/environ", "deny"),
     # self-protection
     ("rm -rf .claude/goodbehavior/profiles", "ask"), ("mv .claude .claude.bak", "ask"),
+    ("python3 -c \"open('notes.md','w').write('x')\"", "allow"),
     ("cd .claude && echo '{}' > settings.json", "ask"), ("git checkout HEAD~1 -- .claude/settings.json", "ask"),
     ("sed -i 's/ask/allow/' .claude/hooks/done-gate.py", "ask"), ("git config core.hooksPath /tmp/h", "ask"),
     # investigation: tunnels and remote reads run, remote changes ask, remote secrets are denied
@@ -563,7 +564,12 @@ TOOL_CASES = [
     ("Grep", {"pattern": "x", "path": "{P}/.secret"}, "deny"), ("Glob", {"pattern": "**/*.tf"}, "allow"),
     ("Edit", {"file_path": "{P}/.claude/settings.json"}, "ask"), ("Write", {"file_path": "{P}/.claude//settings.json"}, "ask"),
     ("Write", {"file_path": "{P}/.mcp.json"}, "ask"), ("Edit", {"file_path": "~/.ssh/config"}, "ask"),
-    ("Edit", {"file_path": "{P}/IaC/modules/x/.terraform.lock.hcl"}, "ask"), ("Edit", {"file_path": "{P}/Makefile"}, "allow"),
+    ("Edit", {"file_path": "{P}/IaC/modules/x/.terraform.lock.hcl"}, "ask"),
+    ("Edit", {"file_path": "~/.claude/projects/-x-project/memory/project_openbao.md"}, "allow"),
+    ("Write", {"file_path": "~/.claude/projects/-x-project/memory/MEMORY.md"}, "allow"),
+    ("Edit", {"file_path": "~/.claude/settings.json"}, "ask"), ("Edit", {"file_path": "{P}/.claude/settings.local.json"}, "ask"),
+    ("Write", {"file_path": "{P}/.claude/hooks/x.py"}, "ask"), ("Write", {"file_path": "~/.claude/plugins/p/hooks.json"}, "ask"),
+    ("Edit", {"file_path": "{P}/.claude/goodbehavior/guard-allow.txt"}, "ask"), ("Edit", {"file_path": "{P}/Makefile"}, "allow"),
     ("Edit", {"file_path": "{P}/.env"}, "allow"), ("Edit", {"file_path": "{P}/IaC/modules/x/main.tf"}, "allow"),
     ("Monitor", {"command": "terraform apply"}, "ask"),
 ]

@@ -41,7 +41,8 @@ and a guard that lets investigation run but stops changes and secret leaks.
   `$(...)`, heredocs, pipes, `cd`) and reads what it would run: `make` recipes, scripts and their functions and
   sourced files, package scripts, inline Python.
 - **Runs:** reads, plans, tests, scans, dry runs, local git and docker, SSM and ssh tunnels, ssh commands that only
-  read. **Asks:** anything that changes something or can't be shown safe, including edits to `.claude/`. **Denies:**
+  read. **Asks:** anything that changes something or can't be shown safe, including edits to the guard's own files (`.claude/settings*.json`, `.claude/hooks/`, `.claude/goodbehavior/`,
+  `.claude/plugins/`, `.mcp.json`); Claude's memory and other `.claude/` files stay writable. **Denies:**
   anything that would show a secret (credential files, `.env`/`.secret`, secret-manager and token commands, state
   dumps, kubeconfigs: `files/kubeconfig`, anything in a `.kubeconfig/` folder or named `*kubeconfig*`).
 - Fails closed on a crash; turns every ask into a deny when permissions are bypassed (Claude Code was seen skipping

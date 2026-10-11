@@ -60,8 +60,8 @@ def worse(a, b):
 # Paths. Protected: writing them changes the guard or what an allowed command does (ask). Secret: reading them
 # shows a credential (deny).
 # --------------------------------------------------------------------------------------------------------------
-PROTECTED_PARTS = (
-    "/.claude/", "/.mcp.json", "/.claude.json", "/.git/config", "/.git/hooks/", "/.git/info/",
+PROTECTED_PARTS = (  # .claude/ only where a write can switch the guard off or change what runs; memory stays writable
+    "/.claude/settings", "/.claude/hooks/", "/.claude/goodbehavior/", "/.claude/plugins/", "/.mcp.json", "/.claude.json", "/.git/config", "/.git/hooks/", "/.git/info/",
     "/.ssh/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/doctl/", "/.kube/", "/.docker/",
     "/.terraform.d/", "/.terraformrc", "/.config/git/", "/.config/gh/", "site-packages/", "dist-packages/",
     "/Library/LaunchAgents/", "/Library/LaunchDaemons/", "/etc/", "/.terraform/",
@@ -121,7 +121,7 @@ def is_protected(path, cwd):
             return is_protected(folder, cwd) or os.path.basename(folder) == ".claude"
         return True
     for c in (real, os.path.abspath(os.path.join(cwd, os.path.expanduser(path)))):
-        if any(m in c + ("/" if os.path.isdir(c) else "") for m in PROTECTED_PARTS) or c.endswith("/.claude"):
+        if any(m in c + "/" for m in PROTECTED_PARTS) or c.endswith("/.claude"):
             return True
         if os.path.basename(c) in PROTECTED_BASENAMES:
             return True
