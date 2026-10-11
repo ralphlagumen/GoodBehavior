@@ -3,6 +3,15 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops profile
+
+- `templates/profiles/devops.md`: a fifth core profile for infrastructure work, cloud or on-prem (IaC, Kubernetes,
+  networking, CI/CD). The real thing is the live environment read back from the provider; verify is apply to non-prod,
+  probe from the consumer's network position, then re-plan for no changes; evidence names the environment it came
+  from. Adds a **pause points** slot: applies, destroys, state edits and DNS/IAM/network changes to shared or prod
+  environments wait for the user, even under standing-proceed.
+- `INDEX.md`, `adopt-goodbehavior`, `install.py`, `test_lint.py`, README: count and list five cores.
+
 ## 2026-07-13 — chat-agents: attach-file + inline-prompt deployment
 
 Some assistants (Copilot observed) **ignore custom instructions**, so standing instructions alone aren't enough. The

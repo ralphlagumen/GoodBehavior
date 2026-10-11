@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """install.py round-trip test — installs the REAL bundle into a temp target and checks the guarantees:
-only the planned profiles land (never all four), the manifest records true sha256s, settings.json merges
+only the planned profiles land (never all five), the manifest records true sha256s, settings.json merges
 without duplication, existing files are never clobbered, and a re-run is a clean no-op."""
 import hashlib, json, os, subprocess, sys, tempfile
 

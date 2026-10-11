@@ -9,7 +9,7 @@ Dev phrasing is allowed only where the development instantiation legitimately li
 import json, os, py_compile, re, sys, tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-PROFILES = ("development", "analysis", "research", "creative")
+PROFILES = ("development", "analysis", "research", "creative", "devops")
 SLOTS = ("**the-real-thing:**", "**verify:**", "**evidence:**")
 
 # files that must stay artifact-agnostic (the invariant layer)

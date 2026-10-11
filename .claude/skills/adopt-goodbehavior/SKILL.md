@@ -1,6 +1,6 @@
 ---
 name: adopt-goodbehavior
-description: The intelligent installer & entry point — adopt the GoodBehavior method into a destination project (by path). Elicits the project's intent, resolves its profile (development/analysis/research/creative, composable), analyzes its workflow, proposes tailored amendments WITH OPTIONS, then after confirmation installs via scripts/install.py — integrating with what's already there, never imposing a parallel structure.
+description: The intelligent installer & entry point — adopt the GoodBehavior method into a destination project (by path). Elicits the project's intent, resolves its profile (development/analysis/research/creative/devops, composable), analyzes its workflow, proposes tailored amendments WITH OPTIONS, then after confirmation installs via scripts/install.py — integrating with what's already there, never imposing a parallel structure.
 ---
 
 Bring the disciplined method into a destination project by **adapting to it, not overwriting it**. adopt is the
@@ -35,9 +35,9 @@ the project's *kind* from file types); use `AskUserQuestion` for the load-bearin
 - **How do you check it's actually right** (not just finished)?
 
 Then resolve the **profile** from `<source>/templates/profiles/`:
-1. Read **only `INDEX.md`** first (cheap) — it lists the four cores (development · analysis · research · creative) with
+1. Read **only `INDEX.md`** first (cheap) — it lists the five cores (development · analysis · research · creative · devops) with
    a `use-when` and truth-source each.
-2. Match the user's answers to the **1–2 closest** profiles and **read only those bodies** — never load all four.
+2. Match the user's answers to the **1–2 closest** profiles and **read only those bodies** — never load all five.
 3. **Compose slots.** A profile is not a rigid single label; take slots (`the-real-thing` / `verify` / `evidence`) from
    different profiles when the project straddles. Canonical case: a **data pipeline** → build ← `development`, verify ←
    `analysis`, evidence ← `analysis`. State the resolved slots explicitly.
@@ -104,7 +104,7 @@ manifest); you do only the **judgment steps** the script can't.
      "source": "<abs source path>", "target": "<abs target path>",
      "skills":   ["audit-goodbehavior", "roadmap-goodbehavior", "gate-build-goodbehavior",
                   "verify-goodbehavior", "uatplan-goodbehavior", "learn-goodbehavior", "update-goodbehavior"],
-     "profiles": ["<only the matched profile(s) — never all four>"],
+     "profiles": ["<only the matched profile(s) — never all five>"],
      "hook": true,
      "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", "...": "per the confirmed planning/memory choices" }
    }
