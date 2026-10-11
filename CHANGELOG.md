@@ -3,6 +3,37 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-11 — devops: ask before every infra change
+
+Infrastructure has no `git reset`: a deleted database or a wrong firewall rule can't be reverted. So:
+
+- **Guard hook.** `done-gate.py` also runs as a PreToolUse hook on Bash. A command that matches a profile's change
+  `match:` lines (terraform/tofu apply, destroy, import, state edits; cloud CLI create/update/delete calls for AWS,
+  Azure, GCP and DigitalOcean; kubectl/helm writes; playbook runs; service restarts, reboots, firewall edits) returns
+  `ask`, so the user must approve it. Read-only commands (`plan`, `describe`, `list`, `get`, logs) pass. Tested live:
+  under `claude -p`, a matched command was blocked even with permissions skipped; a read-only one ran.
+- **`devops.md`:** pause points now cover every change in every environment, dev included. New sections:
+  investigate before you change (read-only first, live state, dependents, say "I don't know yet"), propose then ask
+  (found / fix / why it works / what could break / how to undo / where / "do you want me to run this?"), and talk
+  plainly (assume the user is not an infra expert; no filler; state risks in one plain sentence).
+- `install.py` wires the guard (`PreToolUse`, matcher `Bash`) alongside the Stop hook. **Existing adopters:**
+  `/update-goodbehavior` updates the hook file but not `settings.json`; re-run the install plan (it skips existing
+  files) or add the PreToolUse entry by hand.
+- Tests: 50 commands checked for the right ask/pass decision; install wires the guard once.
+
+## 2026-10-11 — done-gate: profile questions (devops first)
+
+- `done-gate.py`: an installed profile can carry `### gate: change` and `### gate: investigation` sections. When
+  present, their questions replace the generic self-check. A turn is a **change** if it edited files or ran a command
+  matching the profile's `match:` regex; otherwise it is an **investigation**. `claims:` adds conclusion phrases
+  ("root cause", "caused by") that count as a done-claim. No sections → the generic messages, unchanged. A bad regex is
+  ignored, never breaks the session.
+- `devops.md`: change questions (target environment, every destroy/replace in the plan, apply from the saved plan,
+  no-change re-plan, probe as the workload identity, state edits, prod approval and rollback) and investigation
+  questions (symptom and where, observed vs inferred, live state vs code, what changed, alternatives ruled out,
+  read-only probes, what's still unknown; propose the fix, don't apply it). Edit them in the profile.
+- `test_hook.py`: 7 devops cases; runs hermetic (sets `CLAUDE_PROJECT_DIR`).
+
 ## 2026-10-11 — devops baseline guide
 
 - `templates/profiles/devops/baseline.md`: cross-cloud DevOps rules in seven areas (IaC and state, CI/CD, secrets and

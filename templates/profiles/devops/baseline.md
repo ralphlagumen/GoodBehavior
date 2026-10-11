@@ -11,8 +11,8 @@ concrete service names and CLI commands for each rule.
 
 How to run probes:
 - **Read-only by default.** A probe reads state; it does not change it. A probe that changes anything (failover,
-  restore, rotation, a deliberate denied write) is marked **(pause point)**: run it in non-prod, or in prod only as a
-  user-approved exercise. This follows the pause points in `devops.md`.
+  restore, rotation, a deliberate denied write) is marked **(pause point)**: propose it and get the user's yes first,
+  in every environment, per `devops.md`. Prefer non-prod; prod only as a planned, user-approved exercise.
 - **From the consumer's position.** Run reachability and access probes as the workload identity and from the
   workload's network, not from your admin login on your laptop. An admin probe passes where the workload fails.
 - **Name where it ran.** Every probe result records the environment and the account/subscription/project.

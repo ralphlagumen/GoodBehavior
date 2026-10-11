@@ -17,7 +17,7 @@ Plan format (written by the adopt skill after the user confirms):
   "skills":   ["audit-goodbehavior", "verify-goodbehavior", ...],   # skill DIR names to copy
   "profiles": ["analysis", "development"],   # ONLY the matched profile(s) — never all five;
                                              # guides go as "<profile>/<guide>", e.g. "devops/baseline"
-  "hook": true,                              # install done-gate.py + wire the Stop hook
+  "hook": true,                              # install done-gate.py + wire it as Stop and PreToolUse(Bash)
   "templates": { "docs/plans/ROADMAP.md": "templates/ROADMAP.md", ... }   # target-rel -> source-rel
 }
 
@@ -79,7 +79,8 @@ def plan_files(plan):
 
 
 def wire_settings(target, dry_run, report):
-    """Merge the Stop-hook wiring into <target>/.claude/settings.json without touching anything else."""
+    """Merge the hook wiring (Stop, PreToolUse on Bash) into <target>/.claude/settings.json without
+    touching anything else. Each event is wired once; an existing done-gate entry is left alone."""
     path = os.path.join(target, ".claude", "settings.json")
     settings = {}
     if os.path.isfile(path):
@@ -89,19 +90,25 @@ def wire_settings(target, dry_run, report):
         except Exception:
             report["warnings"].append(f"settings.json exists but is not valid JSON — left untouched: {path}")
             return
-    stops = settings.setdefault("hooks", {}).setdefault("Stop", [])
-    for entry in stops:
-        for h in entry.get("hooks", []):
-            if "done-gate.py" in h.get("command", ""):
-                report["skipped"].append(".claude/settings.json (Stop hook already wired)")
-                return
-    stops.append({"hooks": [{"type": "command", "command": HOOK_CMD}]})
+    added = []
+    for event, matcher in (("Stop", None), ("PreToolUse", "Bash")):
+        entries = settings.setdefault("hooks", {}).setdefault(event, [])
+        if any("done-gate.py" in h.get("command", "") for e in entries for h in e.get("hooks", [])):
+            report["skipped"].append(f".claude/settings.json ({event} hook already wired)")
+            continue
+        entry = {"hooks": [{"type": "command", "command": HOOK_CMD}]}
+        if matcher:
+            entry = {"matcher": matcher, **entry}
+        entries.append(entry)
+        added.append(event)
+    if not added:
+        return
     if not dry_run:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             json.dump(settings, f, indent=2)
             f.write("\n")
-    report["created"].append(".claude/settings.json (Stop hook wired)")
+    report["created"].append(f".claude/settings.json ({' + '.join(added)} hook wired)")
 
 
 def main():

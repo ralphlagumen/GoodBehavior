@@ -81,6 +81,9 @@ def main():
         stops = settings["hooks"].get("Stop", [])
         wired = sum(1 for e in stops for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
         check("Stop hook wired exactly once", wired == 1)
+        pre = settings["hooks"].get("PreToolUse", [])
+        guard = [e for e in pre for h in e.get("hooks", []) if "done-gate" in h.get("command", "")]
+        check("PreToolUse guard wired exactly once, on Bash", len(guard) == 1 and guard[0].get("matcher") == "Bash")
 
         # idempotency: re-run must create nothing new and not double-wire
         report2 = run_install(plan_path)
@@ -89,6 +92,9 @@ def main():
             stops2 = json.load(f)["hooks"]["Stop"]
         wired2 = sum(1 for e in stops2 for h in e.get("hooks", []) if "done-gate" in h.get("command", ""))
         check("re-run does not double-wire the hook", wired2 == 1)
+        with open(os.path.join(target, ".claude", "settings.json")) as f:
+            pre2 = json.load(f)["hooks"]["PreToolUse"]
+        check("re-run does not double-wire the guard", len(pre2) == 1)
 
     # profile guides: a nested <profile>/<guide> entry lands under profiles/, tracked with its source path
     with tempfile.TemporaryDirectory() as target:

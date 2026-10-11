@@ -26,9 +26,18 @@ False-positive controls, in the order they short-circuit:
        Doc-only turns (every mutation touched .md/.txt/...) are exempt from the behavioral check:
        there is often nothing to "run" for prose, so proof vocabulary suffices there.
 
-Wire as a Stop hook in .claude/settings.json. Requires only python3.
+Profile questions: an installed profile (.claude/goodbehavior/profiles/*.md) may carry "### gate: <mode>"
+sections — "match:" regexes (one per line) of commands that change things, "claims:" regexes of extra
+claim phrases, and "- " question bullets. A turn that changed files or ran a match: command is "change";
+any other turn is "investigation". When the turn's mode has questions, they replace the generic
+self-check. No such sections → the generic messages below, unchanged.
+
+Guard (PreToolUse on Bash): when a command matches a profile's change "match:" line, the hook answers
+"ask", so the user sees the command and must approve it before it runs. No match: lines → no-op.
+
+Wire as a Stop hook (and a PreToolUse hook for Bash) in .claude/settings.json. Requires only python3.
 """
-import sys, json, re
+import os, sys, json, re
 
 # Tools whose use means the turn did real build work (lowercased) — arms the gate.
 BUILD_TOOLS = {"edit", "write", "multiedit", "notebookedit", "applypatch", "bash"}
@@ -79,11 +88,19 @@ MSG_HOLLOW_PROOF = (
     "method exists to stop.\n")
 
 
+def format_questions(questions):
+    return "".join(f"  {i}) {q}\n" for i, q in enumerate(questions, 1))
+
+
 def main():
     try:
         data = json.load(sys.stdin)
     except Exception:
         sys.exit(0)  # never break the session on a parse error
+
+    if data.get("hook_event_name") == "PreToolUse":
+        guard(data)
+        sys.exit(0)
 
     # Don't re-fire on our own continuation (avoids an infinite stop loop).
     if data.get("stop_hook_active"):
@@ -98,6 +115,10 @@ def main():
     t = text.lower()
 
     tools = turn_tool_uses(entries)
+    gates = load_gates(os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "")
+    mode = turn_mode(tools, gates)
+    gate = gates.get(mode, {})
+    questions = gate.get("questions") or []
 
     # (3) Activity gate: a turn that didn't build anything can't have "finished" anything.
     if not any(name in BUILD_TOOLS for name, _ in tools):
@@ -108,7 +129,7 @@ def main():
         sys.exit(0)
 
     # (2) Assertive only: the claim must head a short clause, not lurk in a long sentence.
-    if not assertive_claim(text):
+    if not assertive_claim(text, gate.get("claims") or []):
         sys.exit(0)
 
     # (0a) An honest hedge always passes — never punish the downgrade.
@@ -119,24 +140,99 @@ def main():
     if PROOF.search(t):
         if doc_only_mutations(tools) or observed_after_last_mutation(tools):
             sys.exit(0)
-        sys.stderr.write(MSG_HOLLOW_PROOF)
+        sys.stderr.write(MSG_HOLLOW_PROOF + (f"Also answer ({mode}):\n" + format_questions(questions)
+                                             if questions else ""))
         sys.exit(2)
 
+    if questions:
+        what = "a conclusion" if mode == "investigation" else "completion"
+        sys.stderr.write(f"GoodBehavior done-gate — you claimed {what}. Before ending, answer the project "
+                         f"profile's {mode} questions:\n" + format_questions(questions)
+                         + "Then show the evidence, soften the claim, or say what's left.\n")
+        sys.exit(2)
     sys.stderr.write(MSG_NO_EVIDENCE)
     sys.exit(2)  # blocks the stop; stderr is returned to the model
 
 
-def assertive_claim(text):
-    """A completion word counts only inside a short, declarative clause — not buried in prose."""
+def assertive_claim(text, extra=None):
+    """A completion word counts only inside a short, declarative clause — not buried in prose.
+    `extra` is a profile's list of additional claim patterns (e.g. an investigation's conclusion phrases)."""
     for raw in re.split(r"[.!?\n]+", text):
         s = raw.strip()
         if not s:
             continue
         if len(s.split()) > 12:
             continue  # incidental mention inside a longer sentence
-        if CLAIM.search(s.lower()):
+        if CLAIM.search(s.lower()) or any(x.search(s.lower()) for x in extra or []):
             return True
     return False
+
+
+def load_gates(project_dir):
+    """{mode: {"match": [re], "claims": [re], "questions": [str]}} from installed profiles."""
+    gates = {}
+    folder = os.path.join(project_dir, ".claude", "goodbehavior", "profiles") if project_dir else ""
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".md"))
+    except Exception:
+        return gates
+    for n in names:
+        try:
+            with open(os.path.join(folder, n)) as f:
+                lines = f.read().splitlines()
+        except Exception:
+            continue
+        cur = None
+        for ln in lines:
+            m = re.match(r"^#{1,6}\s+gate:\s*(\w+)", ln)
+            if m:
+                cur = gates.setdefault(m.group(1).lower(), {"match": [], "claims": [], "questions": []})
+                continue
+            if cur is None:
+                continue
+            if ln.startswith("#"):
+                cur = None
+            elif ln.startswith(("match:", "claims:")):
+                key, _, pat = ln.partition(":")
+                try:
+                    cur[key].append(re.compile(pat.strip(), re.I))
+                except re.error:
+                    pass  # a bad pattern in a profile must never break the session
+            elif ln.startswith("- "):
+                cur["questions"].append(ln[2:].strip())
+            elif ln.startswith("  ") and ln.strip() and cur["questions"]:
+                cur["questions"][-1] += " " + ln.strip()
+    return gates
+
+
+def changes_things(cmd, gates):
+    return any(m.search(str(cmd)) for m in gates.get("change", {}).get("match", []))
+
+
+def turn_mode(tools, gates):
+    """"change" if the turn mutated files or ran a profile match: command, else "investigation"."""
+    for name, tool_input in tools:
+        if name in MUTATION_TOOLS:
+            return "change"
+        cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+        if name == "bash" and changes_things(cmd, gates):
+            return "change"
+    return "investigation"
+
+
+def guard(data):
+    """PreToolUse: a command the profile marks as a change needs the user's explicit approval."""
+    if (data.get("tool_name") or "").lower() != "bash":
+        return
+    cmd = (data.get("tool_input") or {}).get("command", "")
+    gates = load_gates(os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "")
+    if not cmd or not changes_things(cmd, gates):
+        return
+    reason = ("GoodBehavior guard: this command can change live systems, and that may not be undoable. "
+              "Approve only if Claude has already explained, in plain words, what it found, what this "
+              "command will do, what could break, and how to undo it.")
+    json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                      "permissionDecisionReason": reason}}, sys.stdout)
 
 
 def is_observe_tool(name):
