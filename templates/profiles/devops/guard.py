@@ -1270,6 +1270,7 @@ READERS = {
     "umask", "ulimit", "mktemp", "sha1sum", "trivy", "checkov", "tflint", "nproc", "less", "more", "sort", "date",
     "traceroute", "mtr", "whois", "ss", "nc", "openssl", "shellcheck", "gitleaks", "terraform-docs", "infracost",
     "tfsec", "semgrep", "kubeconform", "kube-linter", "hadolint", "actionlint", "yamllint", "fzf",
+    "kubescape", "prowler", "zizmor", "jscpd",
     "lynis", "time", "tput", "locale", "hostname", "env", "printenv", "set", "export", "declare", "typeset",
     "local", "readonly", "unset", "setopt", "unsetopt", "shopt", "cd", "command", "awk", "gawk", "sed", "find",
     "xargs", "curl", "wget", "python", "python3", "tee", "ssh-keygen", "systemctl", "journalctl", "dmesg",
@@ -1316,6 +1317,37 @@ def check_segment(segment, bodies, cwd, depth, raw):
     if words[0].endswith(")") and len(words[0]) > 1 and "=" not in words[0]:
         words = words[1:]
     return check_segment_words(words, cwd, depth, raw, stdin_bodies)
+
+
+def awk_code_only(prog):
+    """Blank out awk string and /regex/ literals, so a `|` or `>` inside them isn't taken for a pipe or a redirect.
+    One pass, like awk's own lexer: a `/` starts a regex only where an operand can't precede it."""
+    out, i, prev = [], 0, ""
+    while i < len(prog):
+        c = prog[i]
+        if c == '"' or (c == "/" and (prev == "" or prev in "(,~!{};&|=<>?:+-*%^\n")):
+            j, in_class = i + 1, False
+            while j < len(prog):
+                if prog[j] == "\\":
+                    j += 2
+                    continue
+                if c == "/" and prog[j] == "[":
+                    in_class = True
+                elif in_class and prog[j] == "]":
+                    in_class = False
+                elif prog[j] == c and not in_class:
+                    break
+                elif prog[j] == "\n":
+                    break
+                j += 1
+            out.append(c + c)
+            i, prev = j + 1, "x"
+            continue
+        out.append(c)
+        if not c.isspace() or c == "\n":
+            prev = c
+        i += 1
+    return "".join(out)
 
 
 def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
@@ -1422,8 +1454,13 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     reads_files = not in_place and name not in WRITERS and name not in {"kubectl", "k", "oc", "helm", "k9s","cd", "mkdir", "stat", "ls", "test", "[", "[[", "git",
                                                          "basename", "dirname", "realpath", "readlink", "file",
                                                          "touch", "chmod", "source", "."}
-    for a in args:
+    # scanners hand a kubeconfig to their client to connect; they don't print it
+    passed = {k + 1 for k, a in enumerate(args[:-1]) if name in {"kubescape", "prowler", "trivy", "kube-bench"}
+              and a in {"--kubeconfig", "--kubeconfig-file"}}
+    for k, a in enumerate(args):
         value = a.split("=", 1)[1] if "=" in a and not a.startswith("-") else a
+        if k in passed:
+            continue
         if reads_files and not a.startswith("-") and (is_secret(a, cwd) or is_secret(value, cwd)):
             return secret("reading `%s`" % a, "prints a secret file")
     if name in {"cp", "scp", "rsync", "tar", "zip"} and any(is_secret(a, cwd) for a in args[:-1] if not a.startswith("-")):
@@ -1607,8 +1644,48 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         if inplace and any(is_protected(f, cwd) for f in files):
             return ask("`sed -i` on a protected file", "changes the guard, its settings or a protected file")
         return None
+    if name in {"kubescape", "prowler", "jscpd"}:
+        outs = [args[k + 1] for k, a in enumerate(args[:-1]) if a in {"-o", "--output", "--output-directory"}]
+        outs += [a.split("=", 1)[1] for a in args if a.startswith(("--output=", "--output-directory="))]
+        if any(is_protected(o, cwd) for o in outs):
+            return ask("`%s` writing into a protected path" % name, "changes the guard, its settings or a protected file")
+    if name == "kubescape":
+        sub = next((a for a in args if not a.startswith("-")), "")
+        if "--show-secrets" in args:
+            return secret("`kubescape --show-secrets`", "prints secret values")
+        if sub not in {"scan", "list", "version", "diff", "help", ""}:
+            return ask("`kubescape %s`" % sub, "changes files, images, the cluster or the tool itself")
+        sent = [a for a in args if a.split("=", 1)[0] in {"--submit", "--account", "--access-key", "--server"}]
+        if sent:
+            return ask("`kubescape %s`" % sent[0], "sends the scan results to an outside service")
+        return None
+    if name == "prowler":
+        risky = {"--fixer": "changes cloud resources", "--security-hub": "writes findings into Security Hub",
+                 "-S": "writes findings into Security Hub", "--send-sh-only-fails": "writes findings into Security Hub",
+                 "--output-bucket": "writes to a cloud bucket", "-B": "writes to a cloud bucket",
+                 "--output-bucket-no-assume": "writes to a cloud bucket", "-D": "writes to a cloud bucket",
+                 "--push-to-cloud": "sends the results to an outside service",
+                 "--slack": "sends the results to Slack", "--shodan": "sends your IPs to Shodan",
+                 "--scan-secrets-validate": "tries found secrets against live services"}
+        hit = next((a.split("=", 1)[0] for a in args if a.split("=", 1)[0] in risky), None)
+        return ask("`prowler %s`" % hit, risky[hit]) if hit else None
+    if name in {"zizmor", "tflint"}:
+        hit = next((a.split("=", 1)[0] for a in args if a.split("=", 1)[0] in {"--fix", "--init"}), None)
+        return ask("`%s %s`" % (name, hit), "changes files or downloads plugins") if hit else None
     if name in {"awk", "gawk", "nawk"}:
-        prog = next((a for a in args if not a.startswith("-")), "")
+        prog, k = None, 0
+        while k < len(args):
+            a = args[k]
+            if a in {"-F", "-v"}:
+                k += 2
+                continue
+            if a in {"-f", "--file"} or a.startswith("-f") and not a.startswith("-F"):
+                return ask("`awk -f` program file", "can run commands or write files")
+            if not a.startswith("-"):
+                prog = a
+                break
+            k += 1
+        prog = awk_code_only(prog or "")
         if re.search(r"system|getline|(?<!\|)\|(?!\|)", prog) or re.search(r"print[f]?[^;{}<>=]*>(?!=)", prog):
             return ask("`awk` program", "can run commands or write files")
         return None

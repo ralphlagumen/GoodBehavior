@@ -76,7 +76,7 @@ These are file reads, safe to run without asking. A tool that isn't installed is
   input to review.
 - **rule:** No copy-paste. The same block repeated across environments, modules, workflows or scripts belongs in one
   module, `for_each`, shared workflow or function, so a fix lands everywhere at once.
-  **probe:** `npx jscpd@4.0.5 --min-lines 8 --format "bash,yaml" --ignore "**/.terraform/**,**/node_modules/**" .`
+  **probe:** `jscpd --min-lines 8 --format "bash,yaml" --ignore "**/.terraform/**,**/node_modules/**" .` (jscpd 4.0.5)
   reports the duplicated share (it doesn't parse `.tf` files). For Terraform, compare the environment roots:
   `diff -r <env-a-dir> <env-b-dir>`; differences should be only in variables and backend.
 - **rule:** No dead code: commented-out resources, scripts nothing calls, workflows that never run, modules no root

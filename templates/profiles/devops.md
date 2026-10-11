@@ -78,8 +78,8 @@ every devops audit also runs three checklist batches of its own, after the area 
    (`command -v <tool>`), list every missing tool in one question (AskUserQuestion), and say for each: what it
    checks, that it only reads, the exact install command (`brew install gitleaks actionlint zizmor kubescape`,
    `go install github.com/terraform-linters/tflint@v0.58.1` (tflint is not in Homebrew),
-   `pipx install --python python3.12 prowler` (Prowler fails on Python 3.14);
-   `npx -y jscpd@4.0.5` downloads on each run) and where it installs. Offer "Yes, install all", "Pick which" and "No".
+   `pipx install --python python3.12 prowler` (Prowler fails on Python 3.14), `npm install -g jscpd@4.0.5`) and where
+   it installs. Offer "Yes, install all", "Pick which" and "No".
    Install only what the user said yes to. A tool the user declined is a **not checked** row with its install
    command, never a silent skip, and never a pass.
 3. **Cost uses real numbers.** Read the last full month's bill by service (Cost Explorer, `doctl invoice list`, the

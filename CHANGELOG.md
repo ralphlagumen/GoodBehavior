@@ -24,7 +24,9 @@ and a guard that lets investigation run but stops changes and secret leaks.
   per guide rule; each row is pass, finding, not checked (with why) or n/a. Broad read-only scanners run too
   (gitleaks over git history, trivy, checkov, tflint, shellcheck, zizmor/actionlint, jscpd, Prowler, kubescape).
   A missing scanner is installed only after the user says yes in one question that lists each tool, what it
-  checks and its install command; a declined tool stays a "not checked" row. Cost
+  checks and its install command; a declined tool stays a "not checked" row.
+- Guard: the scanners (kubescape, Prowler, zizmor, jscpd) run as reads and may be handed a kubeconfig; flags that
+  fix, upload or print secrets still ask or deny. awk programs with `|` or `>` inside quotes or regexes now run. Cost
   reads the real bill and ends with a savings table. Each batch opens with a plain verdict with counts, and the final
   report always covers security, cost and code.
 - Done-gate questions for changes (environment, every destroy/replace, saved plan, no-change re-plan, consent) and
