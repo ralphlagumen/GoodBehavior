@@ -8,6 +8,7 @@ check it safely). CORE_CASES come from a hand-built default-deny guard's bypass 
 loosenings this guard makes on purpose: the user's choice of cloud profile, tunnels (SSM port-forward, ssh -N/-L),
 ssh reads with the user's own ssh config, local git commits, local docker, make targets and scripts whose contents
 are checked line by line."""
+import importlib.util
 import json, os, subprocess, sys, tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -114,6 +115,30 @@ CORE_CASES = [
     ('aws secretsmanager batch-get-secret-value --secret-id-list x', 'deny'),
     ('aws ssm get-parameter --name /x --with-decryption', 'deny'),
     ('kubescape scan --show-evidence --show-secrets', 'deny'),
+    # kubectl secrets: metadata-only custom columns list names; data, annotations or wildcards can show values
+    ("kubectl get secrets -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,OWNER:.metadata.ownerReferences[0].kind'", 'allow'),
+    ("kubectl get secret x -o custom-columns='V:.data.password'", 'deny'),
+    ("kubectl get secret x -o custom-columns='V:.metadata.annotations'", 'deny'),
+    ("kubectl get secret x -o custom-columns='V:.data[*]'", 'deny'),
+    # DigitalOcean Secrets Manager: names and masked values read; reveal flags print secrets
+    ("doctl secrets list", 'allow'),
+    ("doctl secrets get app --region sgp1", 'allow'),
+    ("doctl secrets get app --region sgp1 --show", 'deny'),
+    ("doctl secrets g app --kvs", 'deny'),
+    ("doctl secrets get app --key K --raw", 'deny'),
+    ("doctl secrets get app -o json", 'deny'),
+    ("doctl secrets set app --region sgp1", 'ask'),
+    # a secret-manager value fetched into a variable to use it: the user may allow it
+    ('K="$(aws secretsmanager get-secret-value --secret-id g --query SecretString --output text)" && curl -s -H "Authorization: Bearer $K" https://g.example.com/x', 'ask'),
+    ('K="$(doctl secrets get g --key API_KEY --raw)"; curl -s -H "Authorization: Bearer $K" https://g.example.com/x', 'ask'),
+    # load generators: only the user runs them, never Claude (denied even with a yes)
+    ("k6 run -e TARGET=https://staging.example.com/ load.js", 'deny'),
+    ("hey -z 30s https://staging.example.com/", 'deny'),
+    ("ab -n 1000 -c 50 https://staging.example.com/", 'deny'),
+    ("echo 'GET https://x/' | vegeta attack -duration=10s | vegeta report", 'deny'),
+    ("bash -c 'k6 run load.js'", 'deny'),
+    ("k6 version", 'allow'),
+    ("k6 inspect load.js", 'allow'),
     ("kubectl -n openbao exec openbao-0 -- bao kv get kv/app", 'deny'),
     ("q(){ cat .env; }; q", 'deny'),
     ("kubectl -n gw exec pod/app -- env", 'deny'),
@@ -575,6 +600,12 @@ CORE_CASES = [
 
 P = None  # filled in main(); PROJECT fixture
 PROJECT_CASES = [
+    # a project token used, not shown: the user can allow it (ask); shown, or a cloud credential store: denied
+    ("""K="$(grep '^TF_VAR_api_token=' .env | cut -d= -f2-)" && curl -s -H "Authorization: Bearer $K" https://g.example.com/x""", "ask"),
+    ("python3 -c \"k = open('.env').read().strip(); n = len(k)\"", "ask"),
+    ("python3 -c \"import sys; sys.stdout.write(open('.env').read())\"", "deny"),
+    ('echo "$(cat ~/.aws/credentials)"', "deny"),
+    ("""echo "$(cat .env)" > /dev/null; cat .env""", "deny"),
     # make: recipes are read, following prerequisites, recursive make, variables and .env
     ("make infra_plan", "allow"), ("make infra_test", "allow"), ("make infra_test JOBS=8", "allow"), ("make scan", "allow"),
     ("make infra_apply", "ask"), ("make deploy", "ask"), ("make release", "ask"), ("make semi", "ask"),
@@ -678,6 +709,21 @@ def main():
     for tool, inp, want in TOOL_CASES:
         inp = {k: v.replace("{P}", PROJECT).replace("~", HOME) for k, v in inp.items()}
         expect("%s %s" % (tool, inp), want, run({"tool_name": tool, "tool_input": inp}, PROJECT))
+    # load tests: blocked with a hand-it-to-the-user message, also when permissions are bypassed
+    r = subprocess.run([sys.executable, GUARD], input=json.dumps({"tool_name": "Bash", "tool_input": {
+        "command": "k6 run load.js"}, "cwd": CLEAN, "permission_mode": "bypassPermissions"}), capture_output=True,
+        text=True, env=dict(os.environ, HOME=HOME, CLAUDE_PROJECT_DIR=CLEAN))
+    expect("load test: deny says the user runs it", True, "never runs a load test" in r.stdout)
+    # the guides' own probes: read-only ones run without asking, pause-point ones ask (or are denied)
+    spec = importlib.util.spec_from_file_location("test_hook", os.path.join(os.path.dirname(__file__), "test_hook.py"))
+    test_hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(test_hook)
+    read_only, changing = test_hook.guide_probe_commands()
+    asks_on_purpose = {"az login --identity"}  # changes the local login; only works inside an Azure workload
+    for cmd in read_only:
+        expect("guide probe runs: " + cmd[:80], "ask" if cmd in asks_on_purpose else "allow", bash(cmd))
+    for cmd in changing:
+        expect("guide pause point stops: " + cmd[:80], True, bash(cmd) in {"ask", "deny"})
     # project allow list: turns an ask into a run, never lifts a deny
     allow_file = os.path.join(PROJECT, ".claude", "goodbehavior", "guard-allow.txt")
     os.makedirs(os.path.dirname(allow_file), exist_ok=True)
@@ -770,7 +816,7 @@ def main():
         entries = [json.loads(line) for line in f]
     expect("decision log has asks and denies", True, {"ask", "deny"} <= {e["decision"] for e in entries})
 
-    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 22
+    total = len(CORE_CASES) + len(PROJECT_CASES) + len(TF_CASES) + len(TOOL_CASES) + 23
     for f_ in failures:
         print("  FAIL  " + f_)
     print("  %s  guard: %d/%d decisions as expected" % ("PASS" if not failures else "FAIL", total - len(failures), total))

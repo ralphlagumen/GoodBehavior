@@ -36,7 +36,7 @@ MAX_DEPTH = 4
 MAX_FILE_BYTES = 300_000
 
 # --------------------------------------------------------------------------------------------------------------
-# Decisions. A hit is (what, why, level); level "deny" (secret) beats "ask".
+# Decisions. A hit is (what, why, level); "deny" (secret) beats "user" (only the user may run it) beats "ask".
 # --------------------------------------------------------------------------------------------------------------
 
 
@@ -48,12 +48,35 @@ def secret(what, why):
     return (what, why, "deny")
 
 
+def user_only(what, why):
+    return (what, why, "user")
+
+
+LEVEL_RANK = {"ask": 1, "user": 2, "deny": 3}
+USE_SECRET = ("reads a secret file to use the value (for example as an API token), not to show it. If the user "
+              "says yes, keep the value out of the output: no echo or print of it, no `curl -v`, no `set -x`")
+
+
+def as_use(h, cwd):
+    """A project secret file (`.env*`, `.secret`) read inside a `$(...)` hands the value to the command, not the
+    screen: the user may allow it. Reading one straight to the screen (`cat .env`) and cloud credential stores stay
+    denied."""
+    m = h and h[2] == "deny" and h[1] == "prints a secret file" and re.search(r"reading `([^`]+)`", h[0])
+    if m and is_project_secret(m.group(1), cwd):
+        return ask(h[0], USE_SECRET)
+    if h and h[2] == "deny" and h[1] in {"returns a credential or secret", "prints secret values", "prints a secret"}:
+        return ask(h[0], "fetches a secret from a secret manager or token command to use it, not to show it. If "
+                   "the user says yes, keep the value out of the output: no echo or print of it, no `curl -v`, "
+                   "no `set -x`")
+    return h
+
+
 def worse(a, b):
     if a is None:
         return b
     if b is None:
         return a
-    return b if (b[2] == "deny" and a[2] != "deny") else a
+    return b if LEVEL_RANK[b[2]] > LEVEL_RANK[a[2]] else a
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -132,6 +155,14 @@ def is_protected(path, cwd):
     return False
 
 
+def is_project_secret(path, cwd):
+    """The project's own token files, which code may read to use (never to show) after the user's yes."""
+    real = resolve(path, cwd) or path
+    return is_secret(path, cwd) and (bool(re.match(r"^\.env(\.[^/]+)?$", os.path.basename(real)))
+                                     or os.path.basename(real) in {".secret", ".secrets"}
+                                     or "/.secret/" in real or "/.secrets/" in real)
+
+
 def is_secret(path, cwd):
     cleaned = re.sub(r"\$\{\w+\}", "$V", path or "")
     if not path or path.startswith("-") or re.search(r"\s|[|(){}\[\]\"]", cleaned):
@@ -197,7 +228,7 @@ def env_problem(name):
 # --------------------------------------------------------------------------------------------------------------
 # Cloud CLIs: read operations run; reads that hand back a credential are denied; everything else asks.
 # --------------------------------------------------------------------------------------------------------------
-READ_PREFIXES = ("describe", "get", "list", "ls", "search", "lookup", "select", "query", "scan", "batch-get",
+READ_PREFIXES = ("describe", "get", "list", "ls", "head", "search", "lookup", "select", "query", "scan", "batch-get",
                  "check", "simulate", "estimate", "preview", "validate", "wait", "tail", "filter", "help",
                  "generate-cli-skeleton", "view", "summarize", "count", "resolve", "show", "read")
 AWS_SECRET_OPS = {
@@ -242,6 +273,21 @@ def flag_value(args, *names):
     return None
 
 
+# Read-only subcommands of backup and hypervisor tools (anything else asks).
+TOOL_READS = {
+    "restic": {"snapshots", "check", "ls", "stats", "find", "diff", "version"},
+    "borg": {"list", "info", "check", "diff", "version"},
+    "qm": {"list", "listsnapshot", "config", "status", "pending"},
+    "pct": {"list", "listsnapshot", "config", "status", "pending"},
+}
+GOVC_READ = re.compile(r"^(about|ls|find|tree|events|.*\.(info|ls|tree|sample|list|ip|summary))$")
+
+
+# Load generators: Claude never runs them, even with a yes. It hands the user the script and command instead.
+LOAD_TOOLS = {"k6", "hey", "ab", "wrk", "wrk2", "vegeta", "locust", "artillery", "jmeter", "siege", "oha",
+              "bombardier", "autocannon", "gatling", "gatling.sh", "drill", "ddosify", "plow"}
+
+
 def check_aws(args):
     words = positional(args, AWS_GLOBAL_VALUE_FLAGS)
     if not words or words[0] == "help" or (len(words) >= 2 and words[1] == "help") or "--version" in args:
@@ -266,6 +312,8 @@ def check_aws(args):
         return secret("`aws s3 presign`", "mints a credentialed URL")
     if service == "s3" and op in {"ls"}:
         return None
+    if service == "logs" and op in {"start-query", "stop-query", "start-live-tail"}:
+        return None  # Logs Insights queries and live tail only read log events
     if (op.startswith(READ_PREFIXES) or op in {"test-connection"}) and op not in {"get-console-screenshot"}:
         return None
     return ask("`aws %s %s`" % (service, op), "changes something in the AWS account")
@@ -280,8 +328,13 @@ AZ_READ = {"list", "show", "get", "exists", "query", "describe", "list-locations
 
 
 def check_az(args):
-    words = positional(args, {"--query", "-o", "--output", "--subscription", "-g", "--resource-group", "-n",
-                              "--name", "--ids"})
+    # az takes no positional values: the command path is every word before the first flag, so query strings and
+    # flag values (`--offset 7d`, `--metric "Percentage CPU"`) are never mistaken for the verb
+    words = []
+    for a in args:
+        if a.startswith("-"):
+            break
+        words.append(a)
     if not words or "--version" in args or "--help" in args or "-h" in args:
         return None
     joined = " ".join(words)
@@ -320,6 +373,8 @@ def check_gcloud(args):
         return None
     if words[0] == "auth" and words[1:2] == ["list"]:
         return None
+    if words[0] == "policy-troubleshoot" or words[:2] == ["storage", "ls"]:
+        return None  # explains an IAM decision; lists object names
     if words[-1] == "ssh" or "ssh" in words[:3]:
         return ask("`gcloud %s`" % joined, "opens a shell or runs a command on the host")
     if any(w in GCLOUD_READ for w in words) and not any(w in {"set-iam-policy", "add-iam-policy-binding"} for w in words):
@@ -343,6 +398,11 @@ def check_doctl(args):
     joined = " ".join(words)
     if DOCTL_SECRET.search(joined):
         return secret("`doctl %s`" % joined, "returns a credential or secret")
+    if words[:1] == ["secrets"] and words[1:2] in (["get"], ["g"]) and (
+            any(a.split("=", 1)[0] in {"--show", "--kvs", "--raw", "--key"} for a in args)
+            or (flag_value(args, "-o", "--output") or "").lower() == "json"):
+        # values are masked by default; these flags reveal them (JSON output not confirmed masked, so denied too)
+        return secret("`doctl secrets get` with a reveal flag", "prints secret values")
     if any(w in DOCTL_WRITE for w in words):
         return ask("`doctl %s`" % joined, "changes something in the DigitalOcean account")
     if any(w in DOCTL_READ for w in words) or words[:1] == ["account"] or words[:1] == ["balance"]:
@@ -365,7 +425,9 @@ def check_kubectl(args):
         return None  # validated and admitted by the server (or client), stored nowhere
     out = flag_value(args, "-o", "--output") or next((a[2:] for a in args if a.startswith("-o") and len(a) > 2), "")
     if verb == "get" and any(w in {"secret", "secrets"} or w.startswith("secret/") for w in words[1:]) \
-            and re.match(r"(yaml|json|jsonpath|go-template|custom-columns)", out or ""):
+            and re.match(r"(yaml|json|jsonpath|go-template|custom-columns)", out or "") \
+            and not (out.startswith("custom-columns=") and not re.search(r"\.(data|stringData|annotations|managedFields)\b|\[(?!\d+\])|\*|\.\.", out)):
+        # custom-columns naming only metadata or type fields (no .data, no wildcards) shows names, not values
         return secret("`kubectl get secret -o %s`" % out, "prints secret values")
     if verb == "config":
         sub = words[1] if len(words) > 1 else ""
@@ -395,7 +457,7 @@ def check_kubectl(args):
 
 
 HELM_READ = {"list", "ls", "status", "history", "show", "template", "lint", "search", "version", "env",
-             "dependency", "verify"}
+             "dependency", "verify", "diff", "pull"}  # diff renders and compares; pull downloads a chart locally
 
 
 def check_helm(args):
@@ -488,6 +550,11 @@ def check_terraform(binary, args, cwd, raw):
         return None if words[1:2] in (["list"], ["show"]) else ask("`%s workspace`" % binary, "changes workspace")
     if sub == "output" and (any(f in {"-json", "-raw"} for f in flags) or len(words) > 1):
         return secret("`%s output %s`" % (binary, " ".join(flags)), "prints sensitive outputs in clear")
+    jq = re.search(r"\|\s*jq\b(.*)", raw or "", re.S)
+    if sub == "show" and "-json" in flags and jq and not re.search(
+            r"\b(after|before|values|prior_state|planned_values|variables|configuration|outputs)\b|\.\.|\[\]\s*$",
+            jq.group(1).split("|")[0] + jq.group(1)):
+        return None  # piped to a jq filter that picks addresses and actions, not attribute values
     if sub == "show" and "-json" in flags:
         return ask("`%s show -json`" % binary, "can print sensitive values; filter it (for example with jq) to "
                    "the fields you need")
@@ -593,8 +660,14 @@ def check_python_code(code, cwd, label="inline Python"):
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     literals.setdefault(t.id, set()).add(node.value.value)
-    hit = None
+    hit = secret_use = None
     called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    printed = set()  # nodes whose value goes straight to the screen: print(...), sys.stdout.write(...)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and (isinstance(n.func, ast.Name) and n.func.id == "print" or
+                                        isinstance(n.func, ast.Attribute) and n.func.attr == "write" and
+                                        "stdout" in ast.dump(n.func.value)):
+            printed.update(id(x) for a in n.args for x in ast.walk(a))
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "open" and id(node) not in called:
             hit = worse(hit, ask("%s aliasing open()" % label, "hides which files it writes"))
@@ -620,7 +693,9 @@ def check_python_code(code, cwd, label="inline Python"):
                                          "points near a protected location"))
                 for p in paths:
                     if not PY_WRITE_MODE.search(mode) and is_secret(p, cwd):
-                        return secret("%s reading `%s`" % (label, p), "prints a secret file")
+                        if id(node) in printed or not is_project_secret(p, cwd):
+                            return secret("%s reading `%s`" % (label, p), "prints a secret file")
+                        secret_use = secret_use or ask("%s reading `%s`" % (label, p), USE_SECRET)
                     if PY_WRITE_MODE.search(mode) and is_protected(p, cwd):
                         hit = worse(hit, ask("%s writing `%s`" % (label, p), "is a protected path"))
         if isinstance(node, ast.Import):
@@ -645,7 +720,9 @@ def check_python_code(code, cwd, label="inline Python"):
                 hit = worse(hit, ask("%s calling `os.%s`" % (label, node.attr), "can run, delete or rename"))
             elif isinstance(node.value, ast.Name) and node.value.id == "sys" and node.attr not in PY_SYS_ATTRS:
                 hit = worse(hit, ask("%s touching `sys.%s`" % (label, node.attr), "reaches interpreter internals"))
-    return hit
+    if secret_use and hit and hit[2] == "ask":  # name the secret use first, so the user sees it when asked
+        return (secret_use[0], "%s. It also %s %s" % (secret_use[1], hit[0], hit[1]), "ask")
+    return worse(hit, secret_use)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -1517,6 +1594,21 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
                                   % (", ".join(found[:3]), tip))
         return None
 
+    if name in TOOL_READS or name == "govc":
+        verbs = positional(args)
+        if name == "govc" and verbs and GOVC_READ.match(verbs[0]):
+            return None
+        if name in TOOL_READS and verbs and verbs[0] in TOOL_READS[name] and not any(
+                a.startswith("--repair") for a in args):
+            return None
+        return ask("`%s %s`" % (name, " ".join(verbs[:1])), "is not a known read-only %s command" % name)
+    if name in LOAD_TOOLS:
+        verbs = positional(args)
+        if name == "k6" and verbs[:1] in (["version"], ["inspect"], ["help"]) or args in (["--version"], ["-h"],
+                                                                                         ["--help"]):
+            return None
+        return user_only("`%s`" % name, "sends load at a service, and load can take down a shared or production "
+                         "environment")
     if name == "gh":
         verbs = positional(args, {"-R", "--repo", "-q", "--jq", "-t", "--template", "--json", "-L", "--limit",
                                   "-H", "--header", "--hostname"})
@@ -1846,7 +1938,7 @@ def _check_command(command, cwd, depth, raw, known):
     except ValueError as exc:
         return ask("an unparseable command", "could not be parsed (%s)" % exc)
     for inner in subs:
-        hit = worse(hit, check_command(inner, cwd, depth + 1, raw))
+        hit = worse(hit, as_use(check_command(inner, cwd, depth + 1, raw), cwd))
         if hit and hit[2] == "deny":
             return hit
     for seg in segments:
@@ -1915,6 +2007,10 @@ def classify(payload):
             return "consented", "the user said yes to [run:%s]" % token
     if level == "deny":
         return "deny", "BLOCKED: %s %s. Use the value without printing it, or ask the user to look." % (what, why)
+    if level == "user":
+        return "deny", ("BLOCKED: %s %s. Claude never runs a load test, not even after a yes. Suggest it instead: "
+                        "give the user the script, the exact command, which non-production host to point it at and "
+                        "what to watch, and leave running it to them." % (what, why))
     return "ask", ("%s %s." % (what, why) + CONSENT_HOWTO.format(token=consent_token(command, cwd)))
 
 
@@ -2033,9 +2129,11 @@ def consent_given(payload, token, command):
 
 
 CONSENT_HOWTO = (" To run it, ask the user with AskUserQuestion, one question per call, with metadata "
-                 "{{\"source\": \"run:{token}\"}} (hidden from the user; don't put it in the question text). Explain in plain "
-                 "words what the command or script does, why it's needed, what could break and how to undo it, and "
-                 "offer the options \"Yes, run it\" and \"No\". If they choose Yes, run the exact same command again, "
+                 "{{\"source\": \"run:{token}\"}} (hidden from the user; don't put it in the question text). First, in "
+                 "your normal reply text, explain in plain words what the command or script does, why it's needed, "
+                 "what could break and how to undo it. Keep the question itself to one short line (it shows large and "
+                 "bold), for example \"Run the Grafana alert fix script?\", and offer the options \"Yes, run it\" and "
+                 "\"No\" with one-line descriptions. If they choose Yes, run the exact same command again, "
                  "unchanged. If AskUserQuestion isn't available (a non-interactive run), explain it and ask the user "
                  "to run it themselves.")
 

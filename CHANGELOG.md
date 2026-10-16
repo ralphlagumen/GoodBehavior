@@ -3,6 +3,35 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-16 — devops: performance, zero trust, key inventory, more code guides; a looser guard
+
+**Profile and guides**
+- A **performance** lens and checklist batch: written latency targets, where time goes, autoscaling, caching,
+  placement, the database, cold starts, saturation. Every guide has a Performance section.
+- **Savings are proven**: the order of cost work (idle → design waste → rightsize → schedule → modernize → commit
+  last), and before/after metrics plus the next bill before a saving counts as saved. New cost rules: log and metric
+  spend, registry cleanup, licenses, a cost delta on every IaC change, anomaly alerts and unit cost, Kubernetes
+  packing and spot.
+- **Zero trust by default** in every design, proposal and audit, with its own rules and probes.
+- **Key inventory every audit**: every sensitive key found (repo, history, CI, app specs, env vars, cluster Secrets,
+  server files) must be in the secret manager (AWS Secrets Manager/SSM, Key Vault, GCP Secret Manager, DigitalOcean
+  Secrets Manager, OpenBao/Vault).
+- Terraform: `for_each` over `count`, `moved`/`removed`/`import` blocks, secrets out of state (`sensitive` is not
+  enough), `terraform test`, pinned module sources, tflint rule sets. New guides: `docker`, `ansible`, `ci`, `python`.
+- A code-finding format and a review mode for a single change (PR or diff).
+- **Load tests are the user's call**: Claude writes and suggests the k6 script, never runs it.
+
+**Guard**
+- Load generators (k6, hey, ab, wrk, vegeta, locust, …) are denied even after a yes.
+- A project token from `.env`/`.secret`, or a secret-manager value, read into a variable or code to use it now asks
+  instead of being denied, so the user's yes works. Printing a secret stays denied. `doctl secrets get --show/--kvs/--raw`
+  is denied.
+- Fewer false asks: Azure reads with `--query` or flag values, `gcloud storage ls`, `helm diff`/`pull`,
+  `aws logs start-query`, `s3api head-*`, restic/borg/govc/qm reads, `terraform show -json | jq` filtered to
+  addresses, `kubectl get secrets` with metadata-only columns. Every read-only probe in the guides now runs without
+  asking (a test checks it).
+- Consent questions are one short line; the explanation goes in the reply text above them.
+
 ## 2026-10-12 — devops profile: guides, guard, security, cost and code audits
 
 A fifth core profile for infrastructure work, cloud or on-prem. Guides pair every rule with a live probe; a guard
