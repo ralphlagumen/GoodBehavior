@@ -174,14 +174,21 @@ against the same, visible account, and a one-off `AWS_PROFILE=admin aws ...` sta
 ## The guard
 
 `devops/guard.py` runs before every tool call (the done-gate hook hands each call to it). It works like a
-default-deny guard with a softer default:
-- **Runs** what it can show is read-only or local: cloud reads (`describe`, `list`, `get`), plans and tests,
-  scanners, local git commits, local docker, SSM port-forward tunnels, `ssh -N -L` tunnels, and ssh commands whose
-  every part reads (logs, status, files), pipes included. It reads `make` recipes (prerequisites, variables, `.env`,
-  recursive make), scripts and the scripts they source, package scripts and inline Python before deciding.
-- **Asks you right away**, saying what it found and why, for anything that changes something or that it can't show
-  is safe: infrastructure writes, remote changes over ssh, unknown programs, `eval`, unparseable lines, edits to
-  `.claude/`, `.mcp.json`, the lock file or scanner config.
+developer's machine: local work runs, and only what reaches past the project asks.
+- **Runs** local work without asking: reading, editing and deleting files inside the project or temp folders, local
+  git (`add`, `commit`, `rm`, `mv`, `rebase`, `stash`), tests (`bats`, `node --test`, `terraform test`, `helm
+  unittest`), linters, builds, scratch scripts, local programs it doesn't know, local docker, cloud reads
+  (`describe`, `list`, `get`), plans, tunnels (SSM port-forward, `ssh -N -L`), and ssh commands whose every part
+  reads. It still reads `make` recipes, scripts and the scripts they source, Python (including the commands its
+  `subprocess` calls run), node tests and bats files, so a test or script that runs `terraform apply` still asks.
+  **Don't ask the user before local work either**: run the tests, edit, delete, commit locally. Ask before a pause
+  point, a push, or when the guard asks.
+- **Asks you right away**, saying what it found and why, for what reaches past the project: infrastructure writes
+  (cloud CLIs, `kubectl`/`helm`/`terraform` changes, databases, `act` with secrets), `git push` and history rewrites,
+  remote changes over ssh, deleting or moving files outside the project, throwing away uncommitted work (`git reset
+  --hard`, `git clean -f`, `git checkout -- file`), installing software (`brew`/`pip install`), stopping processes
+  (`kill`), code it can't read (`eval`, `perl -e 'system…'`, `npx`), and edits to `.claude/`, `.mcp.json`, the lock
+  file or scanner config.
 - **Denies** anything that would show a secret (credential files, `.env`/`.secret` printed, secret-manager reads,
   token printers, state dumps, `docker inspect` without `--format`), and anything it crashed on. A script, Python
   code or `$(…)` that reads a project token from `.env`/`.secret` to use it **asks** instead, so the user can allow it. With permissions bypassed,

@@ -3,6 +3,20 @@
 Every entry here is a unit a downstream project will 3-way-merge via `/update-goodbehavior` — write entries so an
 adopter skimming before an update knows what's coming and why.
 
+## 2026-10-17 — devops guard: local work runs, only infrastructure asks
+
+The guard now works like a developer's machine. Before, anything it couldn't prove read-only asked, so deleting a
+file, `git rm`, running the project's tests or a scratch script all asked.
+- **Runs without asking:** edits and deletes inside the project or temp folders, local git (`rm`, `mv`, `rebase`,
+  `reset`, `branch -d`), local programs it doesn't know, tests (`bats`, `node --test`), Python scripts (the commands
+  their `subprocess` calls run are checked), plain shell arithmetic and `for ((…))` loops, `find -exec` (the command
+  is checked), `act -n`.
+- **Still asks:** infrastructure and remote writes, databases, `git push`/history rewrites, deletes outside the
+  project, lost uncommitted work (`reset --hard`, `clean -f`, `checkout -- file`), installs, `kill`, code it can't
+  read (`npx`, `perl -e 'system…'`), `act` with secrets, and Python/node that reaches the network.
+- In bats files, tools called by a variable run (tests mock them); literal commands are still checked.
+- devops.md: don't ask before local work either.
+
 ## 2026-10-16 — devops: performance, zero trust, key inventory, more code guides; a looser guard
 
 **Profile and guides**

@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""GoodBehavior devops guard — PreToolUse. Read-only work runs; anything else asks the user; secrets never show.
+"""GoodBehavior devops guard — PreToolUse. Local work runs; infrastructure and remote changes ask; secrets never show.
 
 Adapted from a hand-built, default-deny guard (write-guard v2) that an owner wrote after an AI ran
-`terraform apply` and `aws mgn start-replication` unasked. That guard was airtight but blocked investigation
-(SSM tunnels, ssh reads). This one keeps its parser and its default — a command runs only when every part of
-it is shown to be read-only or local — and changes what happens otherwise:
+`terraform apply` and `aws mgn start-replication` unasked. It keeps that guard's parser, but not its default:
+like a developer's machine, local work runs, and only what reaches past the project asks.
 
-  run    the command only reads, plans, tests, builds locally, or opens a tunnel. Checked part by part:
-         quotes, variables, $(...), backticks, heredocs, pipes, `cd`, `make` recipes (prerequisites,
-         variables, includes, recursive make), scripts and the scripts they source, inline Python, package
-         scripts, docker images that wrap a cloud CLI, and ssh remote commands.
-  ask    it changes something, or the guard can't show that it doesn't (unknown binary, eval, an
-         unparseable line). The user is asked right away, with what was found and why.
+  run    local work: reads, edits and deletes inside the project or temp folders, local git (commit, rm,
+         rebase), tests, linters, builds, scratch scripts, unknown local programs, cloud reads, plans, tunnels.
+         Commands are still read part by part: quotes, variables, $(...), heredocs, pipes, `make` recipes,
+         scripts and the scripts they source, Python (its subprocess calls too), node tests, bats files,
+         docker images that wrap a cloud CLI, and ssh remote commands.
+  ask    it changes infrastructure or a remote service (cloud/kubectl/helm/terraform writes, databases,
+         git push, ssh changes, CI runs with secrets), deletes outside the project, throws away uncommitted
+         work, installs software, stops processes, runs code the guard can't read (eval, perl -e system,
+         npx), or edits the guard and its settings. The user is asked right away, with what was found and why.
   deny   it would put a secret in the conversation (credential files, secret-manager reads, token
          printers, state dumps), or the guard itself failed (fail closed), or permissions are bypassed and
          the decision would have been "ask" (Claude Code was seen skipping a hook's "ask" in that mode).
@@ -29,6 +31,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 import time
 
 HOME = os.path.expanduser("~")
@@ -133,6 +136,8 @@ def path_dirs():
 
 def is_protected(path, cwd):
     real = resolve(path, cwd)
+    if real is None and TEST_MODE:  # tests write into their own temp folders, named by variables
+        return bool(re.search(r"\.claude|\.mcp\.json|\.ssh|\.aws|\.kube|\.git/|\.terraform|HOME|~", path))
     if real is None:
         # `$DIR/$name.log`: a known, unprotected folder plus an unknown file name (no further /) is fine
         cut = min([i for i in (path.find("$"), path.find("`"), path.find("__SUBST__")) if i >= 0] or [len(path)])
@@ -578,7 +583,14 @@ def check_terraform(binary, args, cwd, raw):
 GIT_READ = {"status", "diff", "log", "show", "blame", "ls-files", "rev-parse", "describe", "shortlog", "grep",
             "cat-file", "show-ref", "merge-base", "rev-list", "diff-tree", "name-rev", "check-ignore",
             "for-each-ref", "ls-tree", "count-objects", "branch", "remote", "config", "reflog", "tag", "fetch",
-            "version", "help", "add", "commit", "stash", "switch", "init", "ls-remote", "whatchanged"}
+            "version", "help", "add", "commit", "stash", "switch", "init", "ls-remote", "whatchanged",
+            # local work: git keeps it in history, so it can be put back
+            "rm", "mv", "restore", "checkout", "reset", "merge", "rebase", "cherry-pick", "revert", "pull", "clone",
+            "apply", "am", "worktree", "bisect", "notes", "format-patch", "archive", "sparse-checkout", "submodule",
+            "clean", "gc", "prune", "maintenance", "range-diff", "mergetool", "difftool", "citool", "lfs", "rerere",
+            "fsck", "verify-commit", "verify-tag", "interpret-trailers", "check-attr", "check-ref-format",
+            "column", "var", "hash-object", "update-index", "write-tree", "read-tree", "commit-tree", "symbolic-ref"}
+GIT_REMOTE_WRITE = {"push", "send-email", "request-pull", "p4", "svn", "filter-branch", "filter-repo", "replace"}
 
 
 def check_git(args, cwd):
@@ -601,8 +613,36 @@ def check_git(args, cwd):
         path = a.split(":", 1)[1] if ":" in a and sub in {"show", "cat-file"} else a
         if is_secret(path, cwd) and sub in {"show", "diff", "log", "cat-file", "blame", "grep", "whatchanged"}:
             return secret("`git %s %s`" % (sub, a), "prints a secret file's contents")
+    if sub in GIT_REMOTE_WRITE:
+        return ask("`git %s`" % sub, "pushes to a remote or rewrites shared history")
     if sub not in GIT_READ:
-        return ask("`git %s`" % sub, "rewrites files from history, changes remotes or pushes")
+        return ask("`git %s`" % sub, "is not a git command the guard knows")
+    lose = "throws away uncommitted work, which git can't put back"
+    if sub in {"rm", "mv", "checkout", "restore", "reset", "clean", "apply", "am", "stash", "merge", "rebase",
+               "cherry-pick", "revert", "pull", "switch"} and any(is_protected(a, cwd) for a in plain):
+        return ask("`git %s` on a protected path" % sub, "changes the guard, its settings or a protected file")
+    if sub == "checkout" and any(os.path.exists(os.path.join(cwd, a)) for a in plain if a not in {"-"}) and not \
+            flags & {"-b", "-B", "--orphan"}:
+        return ask("`git checkout` on files", lose)
+    if sub == "reset" and flags & {"--hard", "--merge", "--keep"}:
+        return ask("`git reset %s`" % sorted(flags & {"--hard", "--merge", "--keep"})[0], lose)
+    if sub == "clean" and not flags & {"-n", "--dry-run"} and not any(re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", a)
+                                                                      for a in sargs):
+        return ask("`git clean`", "deletes untracked files, which git can't put back")
+    if sub == "checkout" and ("--" in sargs or "." in plain or flags & {"-f", "--force", "-p", "--patch"}):
+        return ask("`git checkout` on files", lose)
+    if sub == "restore" and (not flags & {"--staged", "-S"} or flags & {"--worktree", "-W"}):
+        return ask("`git restore`", lose)
+    if sub == "stash" and plain[:1] in (["drop"], ["clear"]):
+        return ask("`git stash %s`" % plain[0], lose)
+    if sub in {"gc", "prune"} and any(a.startswith(("--prune", "--expire")) for a in sargs):
+        return ask("`git %s` with pruning" % sub, "deletes unreachable commits, which can't be put back")
+    if sub == "worktree" and plain[:1] == ["remove"] and flags & {"-f", "--force"}:
+        return ask("`git worktree remove --force`", lose)
+    if sub == "lfs" and plain[:1] == ["push"]:
+        return ask("`git lfs push`", "pushes to a remote")
+    if sub == "submodule" and plain[:1] in (["foreach"],):
+        return ask("`git submodule foreach`", "runs a command the guard can't see in each submodule")
     if flags & {"--ext-diff", "-O", "--open-files-in-pager", "--output", "--exec", "--upload-pack",
                 "--receive-pack"}:
         return ask("`git %s %s`" % (sub, sorted(flags)[0]), "runs a program or writes a file")
@@ -610,10 +650,8 @@ def check_git(args, cwd):
         return ask("`git config`", "changes git configuration")
     if sub == "remote" and plain and plain[0] not in {"show", "get-url", "-v"}:
         return ask("`git remote %s`" % plain[0], "changes remotes")
-    if sub == "stash" and plain[:1] and plain[0] not in {"list", "show", "push", "save"}:
-        return ask("`git stash %s`" % plain[0], "rewrites files from a stash")
-    if sub == "branch" and flags & {"-D", "--delete", "-d", "-f", "--force", "-m", "-M"}:
-        return ask("`git branch` with those flags", "deletes or moves a branch")
+    if sub == "branch" and flags & {"-D", "-f", "--force", "-M"}:
+        return ask("`git branch` with a force flag", "deletes or overwrites a branch that isn't merged")
     return None
 
 
@@ -637,8 +675,72 @@ PY_SYS_ATTRS = {"argv", "stdin", "stdout", "stderr", "exit", "version", "version
 PY_WHOLE_PACKAGES = {m for m in PY_MODULES if "." not in m} - {"os", "sys"}
 
 
+# Modules that reach the network, a cloud or database API, or run code the guard can't read. Any other module is
+# local work and runs. subprocess and os.system are read instead: the command they run is checked like a shell line.
+PY_REMOTE = {"socket", "ssl", "urllib.request", "urllib3", "http.client", "requests", "httpx", "aiohttp",
+             "websocket", "websockets", "ftplib", "smtplib", "poplib", "imaplib", "telnetlib", "xmlrpc", "paramiko",
+             "fabric", "pexpect", "ptyprocess", "pty", "boto3", "botocore", "aioboto3", "google.cloud",
+             "googleapiclient", "google.auth", "azure", "kubernetes", "digitalocean", "pydo", "hcloud", "openstack",
+             "pulumi", "psycopg", "psycopg2", "pymysql", "MySQLdb", "mysql", "pymongo", "motor", "redis", "pika",
+             "kafka", "confluent_kafka", "sqlalchemy", "asyncpg", "grpc", "hvac", "slack_sdk", "github", "gitlab",
+             "ctypes", "cffi", "importlib", "runpy", "code", "codeop", "multiprocessing.connection", "webbrowser",
+             "dns", "scapy", "ansible", "ansible_runner", "docker", "pymssql", "pyodbc", "cx_Oracle", "oracledb",
+             "snowflake", "clickhouse_driver", "clickhouse_connect", "cassandra", "elasticsearch", "opensearchpy",
+             "influxdb_client", "nats", "zmq", "pysftp", "smbclient", "ldap3", "fsspec", "s3fs", "gcsfs", "minio"}
+PY_RUNNERS = {"subprocess", "commands", "sh", "plumbum", "invoke", "asyncio.subprocess"}
+PY_OS_RUN = {"system", "popen", "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+             "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "posix_spawn",
+             "posix_spawnp", "fork", "forkpty", "kill", "killpg", "putenv", "chroot", "setuid", "setgid"}
+PY_SUBPROCESS_CALLS = {"run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput"}
+
+
 def py_module_ok(name):
-    return name in PY_MODULES or name.split(".")[0] in PY_WHOLE_PACKAGES
+    return not any(name == m or name.startswith(m + ".") for m in PY_REMOTE | PY_RUNNERS)
+
+
+def py_argv(node, literals):
+    """The words a subprocess call runs, with `__ARG__` for values only known at run time; None if unknowable."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and len(literals.get(node.id, ())) == 1:
+        return next(iter(literals[node.id]))
+    if isinstance(node, (ast.List, ast.Tuple)):
+        out = []
+        for e in node.elts:
+            if isinstance(e, ast.Starred):
+                out.append("__ARG__")
+            elif isinstance(e, ast.Constant):
+                out.append(str(e.value))
+            elif isinstance(e, ast.Name) and len(literals.get(e.id, ())) == 1:
+                out.append(next(iter(literals[e.id])))
+            else:
+                out.append("__ARG__")
+        return out
+    return None
+
+
+def check_py_run(node, cwd, label, shell=False):
+    """Check the command a subprocess/os.system call runs, the way a shell line is checked."""
+    argv = py_argv(node.args[0], PY_LITERALS) if node.args else None
+    if argv is None:
+        for kw in node.keywords:
+            if kw.arg == "args":
+                argv = py_argv(kw.value, PY_LITERALS)
+    if argv is None:
+        return ask("%s running a computed command" % label, "runs a command the guard can't read")
+    if isinstance(argv, str):
+        try:
+            h = check_command(argv, cwd, 1) if shell else check_segment_words(shlex.split(argv) or [""], cwd, 1, argv)
+        except ValueError:
+            return ask("%s running a command" % label, "could not be parsed")
+    else:
+        if not argv or "__ARG__" in argv[0]:
+            return ask("%s running a computed command" % label, "runs a command the guard can't read")
+        h = check_segment_words(list(argv), cwd, 1, " ".join(argv))
+    return (h[0] + " (run by %s)" % label, h[1], h[2]) if h else None
+
+
+PY_LITERALS = {}
 
 
 PY_BANNED = {"exec", "eval", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals",
@@ -660,7 +762,15 @@ def check_python_code(code, cwd, label="inline Python"):
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     literals.setdefault(t.id, set()).add(node.value.value)
+    global PY_LITERALS
+    PY_LITERALS = literals
     hit = secret_use = None
+    runners = {"subprocess"}  # names bound to the subprocess module or its functions
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            runners |= {a.asname for a in node.names if a.name == "subprocess" and a.asname}
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            runners |= {a.asname or a.name for a in node.names}
     called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
     printed = set()  # nodes whose value goes straight to the screen: print(...), sys.stdout.write(...)
     for n in ast.walk(tree):
@@ -673,6 +783,25 @@ def check_python_code(code, cwd, label="inline Python"):
             hit = worse(hit, ask("%s aliasing open()" % label, "hides which files it writes"))
         if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
             name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            owner = node.func.value.id if isinstance(node.func, ast.Attribute) and isinstance(node.func.value,
+                                                                                             ast.Name) else None
+            if (owner in runners and name in PY_SUBPROCESS_CALLS) or (owner is None and name in runners
+                                                                       and name in PY_SUBPROCESS_CALLS):
+                shell = any(kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value
+                            for kw in node.keywords) or name in {"getoutput", "getstatusoutput"}
+                hit = worse(hit, check_py_run(node, cwd, label, shell=shell))
+            elif owner == "os" and name in {"system", "popen"}:
+                hit = worse(hit, check_py_run(node, cwd, label, shell=True))
+            if name in {"remove", "unlink", "rmdir", "rmtree", "rename", "replace", "move", "chmod", "copy",
+                        "copyfile", "copy2", "copytree", "write_text", "write_bytes", "symlink_to", "touch"}:
+                target = node.args[-1] if name in {"rename", "replace", "move", "copy", "copyfile", "copy2",
+                                                   "copytree"} and node.args else (
+                    node.args[0] if node.args else (node.func.value if isinstance(node.func, ast.Attribute) else None))
+                lit = target.value if isinstance(target, ast.Constant) and isinstance(target.value, str) else (
+                    next(iter(literals[target.id])) if isinstance(target, ast.Name) and len(literals.get(target.id, ())) == 1
+                    else None)
+                if lit and is_protected(lit, cwd):
+                    hit = worse(hit, ask("%s changing `%s`" % (label, lit), "is a protected path"))
             if name in {"open", "read_text", "read_bytes"}:
                 target = node.args[0] if node.args else (node.func.value if isinstance(node.func, ast.Attribute) else None)
                 paths = set()
@@ -688,7 +817,7 @@ def check_python_code(code, cwd, label="inline Python"):
                 for kw in node.keywords:
                     if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
                         mode = str(kw.value.value)
-                if PY_WRITE_MODE.search(mode) and not paths and (PROTECTED_HINT.search(code) or EXTERNAL_PATH.search(code)):
+                if PY_WRITE_MODE.search(mode) and not paths and PROTECTED_HINT.search(code):
                     hit = worse(hit, ask("%s writing a computed path" % label, "the path comes from outside the code or "
                                          "points near a protected location"))
                 for p in paths:
@@ -701,23 +830,40 @@ def check_python_code(code, cwd, label="inline Python"):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not py_module_ok(alias.name):
-                    hit = worse(hit, ask("%s importing `%s`" % (label, alias.name),
-                                         "can run programs, reach the network or a cloud API"))
+                    if alias.name.split(".")[0] not in PY_RUNNERS and alias.name != "asyncio.subprocess":
+                        hit = worse(hit, ask("%s importing `%s`" % (label, alias.name),
+                                             "reaches the network, a cloud or database API, or runs hidden code"))
         elif isinstance(node, ast.ImportFrom):
-            if node.level or not py_module_ok(node.module or ""):
+            if node.module == "subprocess":
+                pass  # its calls are read below
+            elif not node.level and not py_module_ok(node.module or ""):
                 hit = worse(hit, ask("%s importing from `%s`" % (label, node.module),
-                                     "can run programs, reach the network or a cloud API"))
-            elif node.module == "os" and any(a.name not in PY_OS_ATTRS for a in node.names):
-                hit = worse(hit, ask("%s importing from os" % label, "reaches functions that run or delete"))
+                                     "reaches the network, a cloud or database API, or runs hidden code"))
+            elif node.module == "os" and any(a.name in PY_OS_RUN for a in node.names):
+                hit = worse(hit, ask("%s importing from os" % label, "reaches functions that run programs"))
             elif node.module == "sys" and any(a.name not in PY_SYS_ATTRS for a in node.names):
                 hit = worse(hit, ask("%s importing from sys" % label, "reaches interpreter internals"))
         elif isinstance(node, ast.Name) and node.id in PY_BANNED:
             hit = worse(hit, ask("%s using `%s`" % (label, node.id), "runs code the guard can't see"))
         elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("__") and node.attr.endswith("__") and node.attr not in {"__name__", "__doc__"}:
+            if node.attr in {"create_subprocess_exec", "create_subprocess_shell"}:
+                hit = worse(hit, ask("%s calling `%s`" % (label, node.attr), "runs a program the guard can't read"))
+            elif node.attr.startswith("__") and node.attr.endswith("__") and node.attr not in {"__name__", "__doc__"}:
                 hit = worse(hit, ask("%s touching `%s`" % (label, node.attr), "reaches interpreter internals"))
-            elif isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in PY_OS_ATTRS:
-                hit = worse(hit, ask("%s calling `os.%s`" % (label, node.attr), "can run, delete or rename"))
+            elif isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr in PY_OS_RUN - {
+                    "system", "popen"}:
+                hit = worse(hit, ask("%s calling `os.%s`" % (label, node.attr), "runs a program or changes the process"))
+            elif isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr in {"system", "popen"} \
+                    and id(node) not in called:
+                hit = worse(hit, ask("%s passing `os.%s` around" % (label, node.attr), "hides which command it runs"))
+            elif isinstance(node.value, ast.Name) and node.value.id in runners and node.attr not in \
+                    PY_SUBPROCESS_CALLS | {"PIPE", "DEVNULL", "STDOUT", "CalledProcessError", "TimeoutExpired",
+                                           "CompletedProcess", "SubprocessError"}:
+                hit = worse(hit, ask("%s using `subprocess.%s`" % (label, node.attr), "runs a program the guard can't read"))
+            elif isinstance(node.value, ast.Name) and node.value.id in runners and id(node) not in called and \
+                    node.attr in PY_SUBPROCESS_CALLS:
+                hit = worse(hit, ask("%s passing `subprocess.%s` around" % (label, node.attr),
+                                     "hides which command it runs"))
             elif isinstance(node.value, ast.Name) and node.value.id == "sys" and node.attr not in PY_SYS_ATTRS:
                 hit = worse(hit, ask("%s touching `sys.%s`" % (label, node.attr), "reaches interpreter internals"))
     if secret_use and hit and hit[2] == "ask":  # name the secret use first, so the user sees it when asked
@@ -1111,8 +1257,10 @@ def check_make(args, cwd, depth):
 
 
 SHELL_BINARIES = {"bash", "sh", "zsh", "dash", "ksh"}
-JS_RISKY = re.compile(r"child_process|\bexecSync\b|\bspawn(Sync)?\b|\bfetch\s*\(|\bhttps?\.request\b|"
-                      r"\bfs\.(write|append|unlink|rm|rename|copyFile)|\bnet\.|process\.env")
+JS_REMOTE = re.compile(r"\bfetch\s*\(|\bhttps?\.(request|get)\b|\bnet\.(connect|createConnection)|"
+                       r"\baxios(\.\w+)?\s*\(|require\(['\"]axios|"
+                       r"require\(['\"](node-fetch|got|undici|ws|@aws-sdk/|aws-sdk|@google-cloud/|@azure/)")
+JS_STRING = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""")
 BATS_SYNTAX = re.compile(r"""(?m)^\s*@test\s+("[^"]*"|'[^']*')\s*\{|\brun\s+(?=\S)|^\s*load\s+\S+""")
 SECRET_TOOLS = {"vault": {"read", "get", "kv", "token"}, "bao": {"read", "get", "kv", "token"}, "op": {"read", "get", "item", "inject", "run"},
                 "sops": set(), "gh": {"token"}, "pass": {"show"}, "bw": {"get", "export"},
@@ -1268,6 +1416,28 @@ def split_shell(text):
                 cur.append("0")  # arithmetic in a test file: tolerated, like PATH changes
                 i = end + 2
                 continue
+        if quote != "'" and text.startswith("$((", i):
+            end = text.find("))", i)
+            body = text[i + 3:end] if end != -1 else ""
+            names = set(re.findall(r"[A-Za-z_]\w*", body))
+            tainted = any(re.search(r"(?:^|[\s;&|(])%s=(['\"]?)([^\s;&|]*)" % re.escape(n), text) and
+                          any(re.search(r"\[|`", v.group(2)) or (v.group(1) == "'" and "$(" in v.group(2))
+                              for v in re.finditer(r"(?:^|[\s;&|(])%s=(['\"]?)([^\s;&|]*)" % re.escape(n), text))
+                          for n in names) or re.search(r"\b(read|mapfile|readarray)\b", text)
+            if end != -1 and not tainted and re.fullmatch(r"[\w\s+\-*/%<>=!&|?:,$#{}()]*", body) and "$(" not in \
+                    body and "[" not in body:
+                cur.append("0")  # plain arithmetic on names and numbers: no command or array index to run
+                i = end + 2
+                continue
+        if quote is None and text.startswith("((", i) and (i == 0 or text[i - 1] in " \t\n;&|"):
+            end = text.find("))", i)
+            body = text[i + 2:end] if end != -1 else ""
+            if end != -1 and re.fullmatch(r"[\w\s+\-*/%<>=!&|?:,;$#{}]*", body) and "$(" not in body and not any(
+                    re.search(r"(?:^|[\s;&|(])%s=['\"]?[^\s;&|]*[\[`]" % re.escape(n), text)
+                    for n in set(re.findall(r"[A-Za-z_]\w*", body))):
+                cur.append("true")  # (( i++ )) or for (( i = 0; i < n; i++ )): plain arithmetic, no command
+                i = end + 2
+                continue
         if quote != "'" and (text.startswith(("$((", "${(", "$["), i) or (quote is None and text.startswith("((", i))):
             raise ValueError("arithmetic or zsh expansion flags evaluate variable contents as code")
         if quote == "'":
@@ -1380,6 +1550,53 @@ READERS = {
     "xargs", "curl", "wget", "python", "python3", "tee", "ssh-keygen", "systemctl", "journalctl", "dmesg",
 }
 WRITERS = {"cp", "mv", "rm", "rmdir", "mkdir", "touch", "ln", "chmod", "install", "truncate", "tee", "unlink"}
+DELETERS = {"rm", "rmdir", "unlink", "shred", "srm"}
+# Python modules for databases and remote stores, beyond PY_REMOTE's list.
+# Tools with their own checker above; a script or test that starts one by name gets checked.
+INFRA_NAMES = {"aws", "aws2", "az", "gcloud", "doctl", "kubectl", "oc", "helm", "terraform", "tofu", "terragrunt",
+               "pulumi", "ansible", "ansible-playbook", "ssh", "scp", "rsync", "git", "docker", "vault", "op", "sops",
+               "gh", "curl", "wget"}
+
+# Programs that reach infrastructure, a remote or shared service, or change this machine beyond the project.
+# Everything else that isn't checked above is a local program and runs.
+_REMOTE = "reaches infrastructure or a remote service"
+INFRA_TOOLS = {**{t: _REMOTE for t in (
+    "gsutil", "bq", "s3cmd", "s5cmd", "rclone", "mc", "eksctl", "kops", "argocd", "flux", "istioctl", "linkerd",
+    "velero", "kubeadm", "talosctl", "skaffold", "tilt", "packer", "vagrant", "nomad", "consul", "waypoint",
+    "boundary", "cdk", "cdktf", "sam", "serverless", "sls", "copilot", "amplify", "firebase", "vercel", "netlify",
+    "heroku", "flyctl", "fly", "railway", "wrangler", "oci", "ibmcloud", "hcloud", "linode-cli", "vultr-cli", "scw",
+    "civo", "openstack", "exo", "crane", "gcrane", "skopeo", "oras", "cosign", "regctl", "psql", "mysql", "mariadb",
+    "mongosh", "mongo", "redis-cli", "cqlsh", "sqlcmd", "pg_dump", "pg_restore", "mysqldump", "etcdctl",
+    "rabbitmqadmin", "rabbitmqctl", "kafka-topics", "kafka-console-producer", "kcat", "nats", "glab", "tea",
+    "stripe", "sentry-cli", "virsh", "ipmitool", "racadm", "cloudflared", "flarectl", "tailscale", "helmfile",
+    "kubectx", "kubens", "telnet", "ftp", "lftp", "socat", "nmap", "masscan", "mosh", "ssh-copy-id", "terraformer",
+    "cf-terraforming", "s3fs", "aws-nuke", "cloud-nuke")},
+    "act": "runs CI workflows with the secrets in .actrc or -s; a dry run (-n) runs without asking",
+    **{t: "runs code the guard can't read" for t in (
+        "osascript", "open", "npx", "bunx", "pnpx", "uvx", "tmux", "screen", "expect", "php", "lua", "pwsh",
+        "powershell", "deno", "bun", "java", "Rscript", "tclsh", "wish", "irb", "jshell", "xdg-open", "at", "batch")},
+    **{t: "stops processes on this machine (a tunnel, a server, the user's own work)" for t in (
+        "kill", "pkill", "killall")},
+    **{t: "changes this machine's network, services or disks" for t in (
+        "iptables", "ip6tables", "nft", "ufw", "pfctl", "route", "networksetup", "launchctl", "crontab", "shutdown",
+        "reboot", "halt", "poweroff", "diskutil", "mount", "umount", "dd", "mkfs", "fdisk", "parted", "wg",
+        "wg-quick", "chown", "chflags", "defaults", "security", "csrutil", "spctl", "tmutil")},
+}
+PKG_MANAGERS = {"brew", "apt", "apt-get", "yum", "dnf", "apk", "pacman", "port", "pip", "pip3", "pipx", "gem",
+                "cargo", "conda", "mamba", "snap", "flatpak", "softwareupdate", "mas", "asdf", "mise", "tfenv",
+                "tfswitch", "helm-plugin"}
+PKG_READ = {"list", "ls", "show", "info", "search", "freeze", "outdated", "deps", "leaves", "doctor", "config",
+            "check", "help", "home", "desc", "uses", "which", "current", "where", "env", "inspect", "policy"}
+
+
+def outside_project(path, cwd):
+    """True when a path to delete lies outside the project and the temp folders (the user's other files)."""
+    real = resolve(path, cwd)
+    if real is None:
+        return False  # a variable: `rm -r` on one still asks below; a plain `rm "$tmp"` runs, as before
+    roots = {os.path.realpath(repo_root(cwd)), os.path.realpath(cwd), os.path.realpath(tempfile.gettempdir()),
+             "/tmp", "/private/tmp", "/private/var/folders", "/var/folders"}
+    return not any(real == r or real.startswith(r.rstrip("/") + "/") for r in roots)
 KEYWORDS = {"!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "{", "}", "(", ")", "esac",
             ";;"}
 
@@ -1456,6 +1673,8 @@ def awk_code_only(prog):
 
 def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     docker_host = None
+    while words and re.match(r"^[A-Za-z_]\w*\[[^\]`]*\]\+?=", words[0]) and "__SUBST__" not in words[0].split("=")[0]:
+        words = words[1:]  # MAP[key]=value: an array element set; its value is data
     while words and ASSIGNMENT.match(words[0]):
         name, _, value = ASSIGNMENT.match(words[0]).groups()
         if value.startswith("("):  # NAME=( a b c ): an array assignment; its elements are data, not commands
@@ -1516,7 +1735,11 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     if binary in FUNCS or (binary.endswith("()") and binary[:-2] in FUNCS) or binary == "function" or (
             TEST_MODE and re.match(r"(skip|assert_\w+|refute_\w+|bats_\w+|fail)$", binary)):
         return None  # a function defined in this script: its body is checked where it is defined
-    if name == "__SUBST__" or "__SUBST__" in binary:
+    if not args and re.search(r"[*?]", binary) and "/" in binary:
+        return None  # a `case` pattern such as http://*|https://*), split at its `|`
+    if TEST_MODE and ("$" in binary or "__SUBST__" in binary):
+        return None  # a test calling a helper or a mocked tool by a variable; literal commands are still checked
+    if name == "__SUBST__" or "__SUBST__" in binary or "__ARG__" in binary:
         return ask("a command named by substitution", "can't be checked")
     if "$" in binary:
         return ask("a command named by a variable (`%s`)" % binary, "can't be checked")
@@ -1686,12 +1909,16 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             return None  # -n (noexec): parses the script for syntax errors, runs nothing
         for k, a in enumerate(args):
             if a == "-c" and k + 1 < len(args):
+                if TEST_MODE and re.fullmatch(r'"?\$\{?\w+\}?"?', args[k + 1].strip()):
+                    return None  # a test running a workflow step it rendered into a variable, tools mocked
                 return check_command(args[k + 1], cwd, depth + 1)
         script = next((a for a in args if not a.startswith("-")), None)
-        if script:
-            real = resolve(script, cwd)
+        if script is not None:
+            real = resolve(script, cwd) if script else None
             if real and os.path.isfile(real) and depth < MAX_DEPTH:
                 return check_script(real, cwd, depth, interpreter=name)
+            if TEST_MODE and (real is None or not os.path.isfile(real)):
+                return None  # a test running the project's own script by a variable path, with its tools mocked
         return ask("`%s`" % name, "runs a script or stdin the guard can't see")
     if name == "node":
         if not args or args[0] in {"--version", "-v"}:
@@ -1702,9 +1929,16 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         for f in files:
             for path in (glob.glob(os.path.join(cwd, f)) or [os.path.join(cwd, f)]):
                 text = read_text(path)
-                if text is None or JS_RISKY.search(text):
-                    return ask("`node %s`" % os.path.relpath(path, cwd), "runs JavaScript that can start programs, reach "
-                               "the network or write files")
+                rel = os.path.relpath(path, cwd)
+                if text is None:
+                    return ask("`node %s`" % rel, "is too big or unreadable to check")
+                if JS_REMOTE.search(text):
+                    return ask("`node %s`" % rel, "reaches the network or a cloud API")
+                if "child_process" in text:  # the programs it starts: any string naming a checked tool asks
+                    for m in JS_STRING.finditer(text):
+                        words = m.group(2).split()
+                        if words and words[0] in INFRA_NAMES | set(INFRA_TOOLS) | PKG_MANAGERS:
+                            return ask("`node %s` starting `%s`" % (rel, words[0]), "runs a program that %s" % _REMOTE)
         return None
     if name == "bats":
         hit = None
@@ -1722,6 +1956,10 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
                         hit = worse(hit, (h[0] + " (in `%s`)" % os.path.relpath(path, cwd), h[1], h[2]))
         return hit
     if name in {"python", "python3"}:
+        given = [a for k, a in enumerate(args) if not a.startswith("-") and not (k and args[k - 1] in {"-c", "-m"})]
+        hit_arg = next((a for a in given if is_protected(a, cwd)), None)
+        if hit_arg:
+            return ask("`python` given `%s`" % hit_arg, "may write the guard, its settings or a protected file")
         if "-c" in args:
             k = args.index("-c")
             return check_python_code(args[k + 1] if k + 1 < len(args) else "", cwd)
@@ -1833,8 +2071,31 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             return ask("`awk` program", "can run commands or write files")
         return None
     if name == "find":
-        bad = {a for a in args if a in REMOTE_DENY_FLAGS["find"]}
-        return ask("`find %s`" % sorted(bad)[0], "runs a command or deletes files") if bad else None
+        roots = []
+        for a in args:
+            if a.startswith(("-", "(", "!")):
+                break
+            roots.append(a)
+        if "-delete" in args and any(outside_project(r, cwd) or is_protected(r, cwd) for r in roots or ["."]):
+            return ask("`find -delete`", "deletes files outside the project or in a protected path")
+        top = {"/", os.path.realpath(HOME), os.path.realpath(repo_root(cwd))}
+        if "-delete" in args and not {"-name", "-iname", "-path", "-ipath", "-regex", "-newer", "-mtime", "-mmin",
+                                      "-empty"} & set(args) and any(resolve(r, cwd) in top for r in roots or ["."]):
+            return ask("`find -delete` on the whole repo or home", "would delete the repo, home or a parent of it")
+        bad = {a for a in args if a in REMOTE_DENY_FLAGS["find"] - {"-exec", "-execdir", "-ok", "-okdir", "-delete"}}
+        if bad:
+            return ask("`find %s`" % sorted(bad)[0], "writes a file")
+        hit = None
+        for k, a in enumerate(args):  # -exec cmd ... ; : the command is checked like any other
+            if a in {"-exec", "-execdir", "-ok", "-okdir"}:
+                end = next((j for j in range(k + 1, len(args)) if args[j] in {";", "+", "\\;"}), len(args))
+                inner = [w for w in args[k + 1:end] if w != "{}"] or [""]
+                h = check_segment_words(inner, cwd, depth + 1, " ".join(inner)) if inner[0] else \
+                    ask("`find -exec`", "runs nothing the guard can read")
+                if inner[0] in DELETERS and any(outside_project(r, cwd) or is_protected(r, cwd) for r in roots or ["."]):
+                    h = ask("`find -exec %s`" % inner[0], "deletes files outside the project or in a protected path")
+                hit = worse(hit, h)
+        return hit
     if name == "xargs":
         k = 0
         while k < len(args) and args[k].startswith("-"):
@@ -1855,18 +2116,47 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     if name in WRITERS:
         targets = [a for a in args if not a.startswith("-")]
         for t in targets:
+            if TEST_MODE and resolve(t, cwd) is None:
+                continue  # a test cleaning up its own temp folder, named by a variable
             if is_protected(t, cwd):
                 return ask("`%s` on `%s`" % (name, t), "changes the guard, its settings or a protected file")
+        if name in DELETERS | {"mv"}:
+            for t in (targets if name != "mv" else targets[:-1]):
+                if outside_project(t, cwd):
+                    return ask("`%s %s`" % (name, t), "deletes or moves files outside the project")
         if name == "rm" and bundled(args, {"-r", "-R", "--recursive"}):
             for t in targets:
                 real = resolve(t, cwd)
+                if real is None and TEST_MODE:
+                    continue  # a test removing its own temp folder
                 if real is None or real in {"/", os.path.realpath(HOME), os.path.realpath(repo_root(cwd))} \
                         or os.path.realpath(cwd).startswith(real + os.sep):
                     return ask("`rm -r %s`" % t, "would delete the repo, home or a parent of it")
         return None
     if name in READERS:
         return None
-    return ask("`%s`" % name, "is not a command the guard knows to be read-only")
+    if name in PKG_MANAGERS:
+        verbs = positional(args)
+        if not verbs or verbs[0] in PKG_READ or args in (["--version"], ["-v"], ["-h"], ["--help"]):
+            return None
+        return ask("`%s %s`" % (name, verbs[0]), "installs or removes software on this machine")
+    if name in {"perl", "ruby"}:
+        code = " ".join(args)
+        if re.search(r"\bsystem\b|\bexec\b|`|\bqx\b|\bspawn\b|\bopen\s*\(?[^)]*\||%x|\bIO\.popen|\bunlink\b|"
+                     r"\brmtree\b|\bSocket\b|LWP|Net::|require|\buse\s|-M", code):
+            return ask("`%s` code" % name, "runs programs, deletes files or reaches the network")
+        return None
+    if name == "tmux" and positional(args)[:1] in (["ls"], ["list-sessions"], ["list-windows"], ["list-panes"],
+                                                     ["capture-pane"], ["display-message"], ["has-session"]):
+        return None
+    if name == "act" and (bundled(args, {"-n", "--dryrun", "-l", "--list", "-g", "--graph", "--validate"})
+                           or any(a.startswith("--dryrun") for a in args)):
+        return None  # parses the workflows, starts nothing
+    if name in INFRA_TOOLS:
+        if args in (["--version"], ["version"], ["-h"], ["--help"], ["help"]):
+            return None
+        return ask("`%s`" % name, INFRA_TOOLS[name])
+    return None  # a local program: it works on this machine, which git and the user can put back
 
 
 MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=[\"']?\$\(\s*mktemp\b[^)]*\)")
