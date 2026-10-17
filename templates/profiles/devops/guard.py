@@ -118,7 +118,7 @@ def project_dir(payload):
 
 def resolve(path, cwd):
     """Absolute, symlink-resolved path, or None when it can't be known (a variable or substitution in it)."""
-    p = path.replace("${HOME}", HOME).replace("$HOME", HOME)
+    p = path.replace("${HOME}", HOME).replace("$HOME", HOME).replace("${PWD}", cwd).replace("$PWD", cwd)
     if p.startswith("~"):
         p = os.path.expanduser(p)
     if "$" in p or "`" in p or "__SUBST__" in p:
@@ -134,8 +134,23 @@ def path_dirs():
     return dirs
 
 
+def loop_values(path):
+    """Every value of `path` when its only variables are `for NAME in a b c` loop variables, else None."""
+    names = set(re.findall(r"\$\{?([A-Za-z_]\w*)\}?", path))
+    if not names or "`" in path or "__SUBST__" in path or re.search(r"\$[^{A-Za-z_]|\$\{[^}]*[^\w}]", path) \
+            or any(n not in LOOPS for n in names):
+        return None
+    out = [path]
+    for n in names:
+        out = [re.sub(r"\$\{%s\}|\$%s(?!\w)" % (n, n), lambda _m, v=v: v, o) for o in out for v in LOOPS[n]]
+    return out
+
+
 def is_protected(path, cwd):
     real = resolve(path, cwd)
+    values = loop_values(path) if real is None else None
+    if values is not None:
+        return any(is_protected(v, cwd) for v in values)
     if real is None and TEST_MODE:  # tests write into their own temp folders, named by variables
         return bool(re.search(r"\.claude|\.mcp\.json|\.ssh|\.aws|\.kube|\.git/|\.terraform|HOME|~", path))
     if real is None:
@@ -580,26 +595,30 @@ def check_terraform(binary, args, cwd, raw):
 # --------------------------------------------------------------------------------------------------------------
 # git: reads and local commits run; anything that rewrites files from history, pushes or runs programs asks.
 # --------------------------------------------------------------------------------------------------------------
-GIT_READ = {"status", "diff", "log", "show", "blame", "ls-files", "rev-parse", "describe", "shortlog", "grep",
-            "cat-file", "show-ref", "merge-base", "rev-list", "diff-tree", "name-rev", "check-ignore",
-            "for-each-ref", "ls-tree", "count-objects", "branch", "remote", "config", "reflog", "tag", "fetch",
-            "version", "help", "add", "commit", "stash", "switch", "init", "ls-remote", "whatchanged",
-            # local work: git keeps it in history, so it can be put back
-            "rm", "mv", "restore", "checkout", "reset", "merge", "rebase", "cherry-pick", "revert", "pull", "clone",
-            "apply", "am", "worktree", "bisect", "notes", "format-patch", "archive", "sparse-checkout", "submodule",
-            "clean", "gc", "prune", "maintenance", "range-diff", "mergetool", "difftool", "citool", "lfs", "rerere",
-            "fsck", "verify-commit", "verify-tag", "interpret-trailers", "check-attr", "check-ref-format",
-            "column", "var", "hash-object", "update-index", "write-tree", "read-tree", "commit-tree", "symbolic-ref"}
-GIT_REMOTE_WRITE = {"push", "send-email", "request-pull", "p4", "svn", "filter-branch", "filter-repo", "replace"}
+# git is local work, not devops: every git command runs, pushes and lost work included. Only three things stop it:
+# printing a secret, writing the guard's own files, and a program git is told to start, which is checked or asks.
+GIT_SECRET_SUBS = {"show", "diff", "log", "cat-file", "blame", "grep", "whatchanged"}
+GIT_WRITE_SUBS = {"rm", "mv", "checkout", "restore", "reset", "clean", "apply", "am", "stash", "merge", "rebase",
+                  "cherry-pick", "revert", "pull", "switch"}
+GIT_RUN_KEYS = re.compile(r"^(alias\.|core\.(sshcommand|pager|editor|hookspath|fsmonitor|askpass|gitproxy)|"
+                          r"(diff|merge|filter)\..*\.(command|driver|textconv|clean|smudge|process)|credential\.|"
+                          r"gpg\.|sequence\.editor|pager\.|uploadpack\.|receivepack\.|remote\..*\.(uploadpack|"
+                          r"receivepack)|include\.|includeif\.|protocol\.)", re.I)
+GIT_RUN_FLAGS = {"--ext-diff", "--open-files-in-pager", "--upload-pack", "--receive-pack"}
 
 
-def check_git(args, cwd):
+def check_git(args, cwd, depth=0):
     i = 0
     while i < len(args) and args[i].startswith("-"):
-        if args[i] == "-C":
+        if args[i] in {"-C", "-c"}:
+            key = args[i + 1].split("=", 1)[0] if i + 1 < len(args) else ""
+            if args[i] == "-c" and GIT_RUN_KEYS.match(key):
+                return ask("`git -c %s`" % key, "sets a program for git to run")
             i += 2
             continue
-        if args[i] in {"--no-pager", "-P", "--no-optional-locks"}:
+        if args[i] in {"--no-pager", "-P", "--no-optional-locks", "--paginate", "-p", "--bare",
+                       "--literal-pathspecs", "--no-replace-objects"} or args[i].startswith(("--git-dir=",
+                                                                                            "--work-tree=")):
             i += 1
             continue
         return ask("`git %s`" % args[i], "can override config or run a program")
@@ -611,48 +630,29 @@ def check_git(args, cwd):
     flags = {a.split("=", 1)[0] for a in sargs if a.startswith("-")}
     for a in plain:  # git show HEAD:.env, git diff -- .env, git log -p -- .env
         path = a.split(":", 1)[1] if ":" in a and sub in {"show", "cat-file"} else a
-        if is_secret(path, cwd) and sub in {"show", "diff", "log", "cat-file", "blame", "grep", "whatchanged"}:
+        if is_secret(path, cwd) and sub in GIT_SECRET_SUBS:
             return secret("`git %s %s`" % (sub, a), "prints a secret file's contents")
-    if sub in GIT_REMOTE_WRITE:
-        return ask("`git %s`" % sub, "pushes to a remote or rewrites shared history")
-    if sub not in GIT_READ:
-        return ask("`git %s`" % sub, "is not a git command the guard knows")
-    lose = "throws away uncommitted work, which git can't put back"
-    if sub in {"rm", "mv", "checkout", "restore", "reset", "clean", "apply", "am", "stash", "merge", "rebase",
-               "cherry-pick", "revert", "pull", "switch"} and any(is_protected(a, cwd) for a in plain):
+    if sub in GIT_WRITE_SUBS and any(is_protected(a, cwd) for a in plain):
         return ask("`git %s` on a protected path" % sub, "changes the guard, its settings or a protected file")
-    if sub == "checkout" and any(os.path.exists(os.path.join(cwd, a)) for a in plain if a not in {"-"}) and not \
-            flags & {"-b", "-B", "--orphan"}:
-        return ask("`git checkout` on files", lose)
-    if sub == "reset" and flags & {"--hard", "--merge", "--keep"}:
-        return ask("`git reset %s`" % sorted(flags & {"--hard", "--merge", "--keep"})[0], lose)
-    if sub == "clean" and not flags & {"-n", "--dry-run"} and not any(re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", a)
-                                                                      for a in sargs):
-        return ask("`git clean`", "deletes untracked files, which git can't put back")
-    if sub == "checkout" and ("--" in sargs or "." in plain or flags & {"-f", "--force", "-p", "--patch"}):
-        return ask("`git checkout` on files", lose)
-    if sub == "restore" and (not flags & {"--staged", "-S"} or flags & {"--worktree", "-W"}):
-        return ask("`git restore`", lose)
-    if sub == "stash" and plain[:1] in (["drop"], ["clear"]):
-        return ask("`git stash %s`" % plain[0], lose)
-    if sub in {"gc", "prune"} and any(a.startswith(("--prune", "--expire")) for a in sargs):
-        return ask("`git %s` with pruning" % sub, "deletes unreachable commits, which can't be put back")
-    if sub == "worktree" and plain[:1] == ["remove"] and flags & {"-f", "--force"}:
-        return ask("`git worktree remove --force`", lose)
-    if sub == "lfs" and plain[:1] == ["push"]:
-        return ask("`git lfs push`", "pushes to a remote")
-    if sub == "submodule" and plain[:1] in (["foreach"],):
-        return ask("`git submodule foreach`", "runs a command the guard can't see in each submodule")
-    if flags & {"--ext-diff", "-O", "--open-files-in-pager", "--output", "--exec", "--upload-pack",
-                "--receive-pack"}:
-        return ask("`git %s %s`" % (sub, sorted(flags)[0]), "runs a program or writes a file")
-    if sub == "config" and not flags & {"--get", "--get-all", "--get-regexp", "--list", "-l"}:
-        return ask("`git config`", "changes git configuration")
-    if sub == "remote" and plain and plain[0] not in {"show", "get-url", "-v"}:
-        return ask("`git remote %s`" % plain[0], "changes remotes")
-    if sub == "branch" and flags & {"-D", "-f", "--force", "-M"}:
-        return ask("`git branch` with a force flag", "deletes or overwrites a branch that isn't merged")
-    return None
+    run_flags = flags & (GIT_RUN_FLAGS | ({"-O"} if sub == "grep" else set()))
+    if run_flags:
+        return ask("`git %s %s`" % (sub, sorted(run_flags)[0]), "runs a program the guard can't see")
+    if any(a.startswith("--output=") and is_protected(a.split("=", 1)[1], cwd) for a in sargs):
+        return ask("`git %s --output`" % sub, "writes a protected path")
+    if sub == "config" and len(plain) >= 2 and GIT_RUN_KEYS.match(plain[0]):
+        return ask("`git config %s`" % plain[0], "sets a program for git to run")
+    inner = []  # the shell commands git is told to run: checked like any other command
+    for k, a in enumerate(sargs):
+        if sub == "rebase" and a in {"-x", "--exec"} and k + 1 < len(sargs):
+            inner.append(sargs[k + 1])
+        elif sub == "rebase" and a.startswith("--exec="):
+            inner.append(a.split("=", 1)[1])
+    if sub == "submodule" and plain[:1] == ["foreach"]:
+        inner.append(" ".join(a for a in plain[1:]))
+    hit = None
+    for cmd in inner:
+        hit = worse(hit, check_command(cmd, cwd, depth + 1))
+    return hit
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -792,8 +792,10 @@ def check_python_code(code, cwd, label="inline Python"):
                 hit = worse(hit, check_py_run(node, cwd, label, shell=shell))
             elif owner == "os" and name in {"system", "popen"}:
                 hit = worse(hit, check_py_run(node, cwd, label, shell=True))
-            if name in {"remove", "unlink", "rmdir", "rmtree", "rename", "replace", "move", "chmod", "copy",
-                        "copyfile", "copy2", "copytree", "write_text", "write_bytes", "symlink_to", "touch"}:
+            str_replace = name == "replace" and owner not in {"os", "shutil"} and len(node.args) >= 2
+            if not str_replace and name in {"remove", "unlink", "rmdir", "rmtree", "rename", "replace", "move",
+                                            "chmod", "copy", "copyfile", "copy2", "copytree", "write_text",
+                                            "write_bytes", "symlink_to", "touch"}:
                 target = node.args[-1] if name in {"rename", "replace", "move", "copy", "copyfile", "copy2",
                                                    "copytree"} and node.args else (
                     node.args[0] if node.args else (node.func.value if isinstance(node.func, ast.Attribute) else None))
@@ -1592,6 +1594,9 @@ PKG_READ = {"list", "ls", "show", "info", "search", "freeze", "outdated", "deps"
 def outside_project(path, cwd):
     """True when a path to delete lies outside the project and the temp folders (the user's other files)."""
     real = resolve(path, cwd)
+    values = loop_values(path) if real is None else None
+    if values is not None:
+        return any(outside_project(v, cwd) for v in values)
     if real is None:
         return False  # a variable: `rm -r` on one still asks below; a plain `rm "$tmp"` runs, as before
     roots = {os.path.realpath(repo_root(cwd)), os.path.realpath(cwd), os.path.realpath(tempfile.gettempdir()),
@@ -1685,6 +1690,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             continue
         if name == "DOCKER_HOST" and value.startswith("ssh://"):
             docker_host = value
+        elif name == "IFS" and next((w for w in words if not ASSIGNMENT.match(w)), None) == "read":
+            pass  # `while IFS= read -r line`: splits a line, runs nothing
         elif len(words) > 1 or DANGEROUS_ENV.match(name):
             h = env_problem(name)
             if h:
@@ -1806,9 +1813,13 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             given = plain if any(a in {"-e", "-f", "--regexp", "--file"} for a in args) else plain[1:]
             paths = [a for a in given if os.path.isdir(os.path.join(cwd, a))] if given else ["."]
             follow = bool(bundled(args, {"-R", "--dereference-recursive"} if name != "rg" else {"-L", "--follow"}))
+            includes = [a.split("=", 1)[1] for a in args if a.startswith("--include=")]
+            includes += [args[k + 1] for k, a in enumerate(args[:-1]) if a == "--include"]
             for p in paths:
                 found = secrets_under(os.path.join(cwd, p), excludes, hidden=hidden, follow_links=follow,
                                       exclude_dirs=exclude_dirs)
+                if includes and name != "rg":  # grep searches only files whose name matches an --include
+                    found = [f for f in found if any(fnmatch.fnmatch(os.path.basename(f), g) for g in includes)]
                 if found:
                     dirs = sorted({f.split(os.sep)[0] for f in found if os.sep in f})
                     tip = "".join(" --exclude-dir=%s" % d for d in dirs[:3])
@@ -1881,7 +1892,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     if name in {"make", "gmake"}:
         return check_make(args, cwd, depth) if depth < MAX_DEPTH else ask("`make`", "is nested too deep to check")
     if name == "git":
-        return check_git(args, cwd)
+        return check_git(args, cwd, depth)
     if name == "ssh":
         return check_ssh(args)
     if name in {"scp", "sftp", "rsync"} and any(":" in a for a in args if not a.startswith("-")):
@@ -1967,8 +1978,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
             mod = args[args.index("-m") + 1] if args.index("-m") + 1 < len(args) else ""
             return None if mod in {"json.tool", "py_compile", "pytest", "unittest", "venv"} \
                 else ask("`python -m %s`" % mod, "runs a module the guard can't check")
-        script = next((a for a in args if not a.startswith("-")), None)
-        if script:
+        script = None if "-" in args else next((a for a in args if not a.startswith("-")), None)
+        if script:  # `python3 - a b`: the program is stdin, a and b are its arguments
             real = resolve(script, cwd)
             if real and os.path.isfile(real):
                 return check_script(real, cwd, depth, interpreter="python3")
@@ -2118,6 +2129,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         for t in targets:
             if TEST_MODE and resolve(t, cwd) is None:
                 continue  # a test cleaning up its own temp folder, named by a variable
+            if name in DELETERS and re.search(r"(^|/)__pycache__/?$|\.pyc$", t) and "$" not in t:
+                continue  # python rebuilds its cache; deleting it changes nothing the guard runs
             if is_protected(t, cwd):
                 return ask("`%s` on `%s`" % (name, t), "changes the guard, its settings or a protected file")
         if name in DELETERS | {"mv"}:
@@ -2125,7 +2138,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
                 if outside_project(t, cwd):
                     return ask("`%s %s`" % (name, t), "deletes or moves files outside the project")
         if name == "rm" and bundled(args, {"-r", "-R", "--recursive"}):
-            for t in targets:
+            for t in [v for t in targets for v in (loop_values(t) or [t])]:
                 real = resolve(t, cwd)
                 if real is None and TEST_MODE:
                     continue  # a test removing its own temp folder
@@ -2140,6 +2153,16 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         if not verbs or verbs[0] in PKG_READ or args in (["--version"], ["-v"], ["-h"], ["--help"]):
             return None
         return ask("`%s %s`" % (name, verbs[0]), "installs or removes software on this machine")
+    if name == "perl":
+        k = next((k for k, a in enumerate(args[:-1]) if a == "-e" or re.fullmatch(r"-[0lnpi]*e", a)), None)
+        code = args[k + 1] if k is not None else ""
+        edits = re.sub(r"(?:^|(?<=;))\s*(?:s|tr|y)([^\w\s{(\[<])(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[gimsxrc]*\s*(?:;|$)",
+                       "", code, flags=re.S)
+        if k is not None and code and not edits.strip() and sum(1 for a in args if a.startswith("-") and "e" in a) == 1:
+            files = [a for j, a in enumerate(args) if j != k + 1 and not a.startswith("-")]
+            if any(is_protected(f, cwd) for f in files):
+                return ask("`perl -i` on a protected file", "changes the guard, its settings or a protected file")
+            return None  # only s/// and tr///, without the e flag: text substitution, like sed
     if name in {"perl", "ruby"}:
         code = " ".join(args)
         if re.search(r"\bsystem\b|\bexec\b|`|\bqx\b|\bspawn\b|\bopen\s*\(?[^)]*\||%x|\bIO\.popen|\bunlink\b|"
@@ -2162,6 +2185,9 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
 MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=[\"']?\$\(\s*mktemp\b[^)]*\)")
 STATUS_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\?")
 KNOWN = {}  # variables set to literals earlier in the command being checked; inherited by sh -c / xargs
+LOOPS = {}  # `for NAME in a b c` over literal words, NAME never set another way: the values NAME takes
+FOR_LOOP = re.compile(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*(?:;|\n)\s*do\b")
+CASE_PATTERNS = re.compile(r"(\bin|;;&?|;&)(\s+)\(?([^\s()|;&'\"`$]+(?:\s*\|\s*[^\s()|;&'\"`$]+)*)\)")
 FUNCS = set()  # shell functions defined in the text being checked; their bodies are checked where defined
 FUNC_DEF = re.compile(r"(?m)(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:function\s+([A-Za-z_][\w-]*)|([A-Za-z_][\w-]*)\s*\(\s*\))")
 # NAME=literal at the top level of a command line, so `$(...)` checked before the assignment still sees its value
@@ -2179,12 +2205,14 @@ TEST_MODE = False  # inside a test file: tests mock tools by changing PATH, whic
 
 def check_command(command, cwd, depth=0, raw=None, test_mode=None):
     """The worst decision over every part of a shell command line, or None when all of it is safe."""
-    global KNOWN, FUNCS, TEST_MODE
-    outer_test = TEST_MODE
+    global KNOWN, FUNCS, TEST_MODE, LOOPS
+    outer_test, outer_loops = TEST_MODE, LOOPS
     raw_defs = command
     if test_mode is not None:
         TEST_MODE = test_mode
     command = command.replace("\\\n", " ")  # line continuations
+    if re.search(r"\bcase\b", command):  # `a|b)` case patterns are words to match, not commands to run
+        command = CASE_PATTERNS.sub(r"\1\2", command)
     raw = raw if raw is not None else command
     # `name(){ body; }` mid-line: check the body as a { ...; } group; calls to `name` are then known (FUNCS)
     command = re.sub(r"(^|[;&|\n]\s*)(?:function\s+)?[A-Za-z_][\w-]*\s*\(\s*\)\s*\{", r"\1{ ", command)
@@ -2200,11 +2228,25 @@ def check_command(command, cwd, depth=0, raw=None, test_mode=None):
         known[m.group(1)] = "/tmp/__mktemp__"
     for m in STATUS_ASSIGN.finditer(command):
         known[m.group(1)] = "0"
+    loops = dict(LOOPS)
+    for m in FOR_LOOP.finditer(command):
+        n = m.group(1)
+        try:
+            values = shlex.split(m.group(2))
+        except ValueError:
+            continue
+        reset = re.search(r"(?:^|[\s;&|(])%s\+?=|\b(read|getopts|mapfile|readarray|select)\b[^;&|\n]*\b%s\b"
+                          % (n, n), command)
+        if not values or reset or n in KNOWN or any(re.search(r"[$`*?\[{]|__SUBST__", v) for v in values):
+            loops[n] = None  # set some other way too: its value can't be known
+        elif loops.get(n, ()) is not None:
+            loops[n] = loops.get(n, []) + values  # two loops over the same name: either list's values
     try:
+        LOOPS = {n: v for n, v in loops.items() if v}
         KNOWN = known
         return _check_command(command, cwd, depth, raw, known)
     finally:
-        KNOWN, FUNCS, TEST_MODE = outer, outer_funcs, outer_test
+        KNOWN, FUNCS, TEST_MODE, LOOPS = outer, outer_funcs, outer_test, outer_loops
 
 
 def _check_command(command, cwd, depth, raw, known):
