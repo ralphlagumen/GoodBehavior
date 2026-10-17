@@ -179,7 +179,8 @@ developer's machine: local work runs, and only what reaches past the project ask
   every git command (`commit`, `push`, `reset --hard`, `checkout`, `clean`, `worktree remove --force`: git is not
   devops), tests (`bats`, `node --test`, `terraform test`, `helm
   unittest`), linters, builds, scratch scripts, local programs it doesn't know, local docker, cloud reads
-  (`describe`, `list`, `get`), plans, tunnels (SSM port-forward, `ssh -N -L`), and ssh commands whose every part
+  (`describe`, `list`, `get`, and `curl` GETs with the project's token to a provider API, the project's git host or a
+  host its `.env` names; `-v` with a token is denied, other hosts ask), plans, tunnels (SSM port-forward, `ssh -N -L`), and ssh commands whose every part
   reads. It still reads `make` recipes, scripts and the scripts they source, Python (including the commands its
   `subprocess` calls run), node tests and bats files, so a test or script that runs `terraform apply` still asks.
   **Don't ask the user before local work either**: run the tests, edit, move, delete, commit. Ask before a pause

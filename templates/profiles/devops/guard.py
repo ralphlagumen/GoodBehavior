@@ -57,7 +57,8 @@ def user_only(what, why):
 
 LEVEL_RANK = {"ask": 1, "user": 2, "deny": 3}
 USE_SECRET = ("reads a secret file to use the value (for example as an API token), not to show it. If the user "
-              "says yes, keep the value out of the output: no echo or print of it, no `curl -v`, no `set -x`")
+              "says yes, keep the value out of the output: no echo or print of it, no `curl -v`, no `set -x`. "
+              "Loading it with `set -a; . ./.env; set +a` and using `$NAME` runs without asking")
 
 
 def as_use(h, cwd):
@@ -1606,6 +1607,30 @@ KEYWORDS = {"!", "if", "then", "else", "elif", "fi", "do", "done", "while", "unt
             ";;"}
 
 
+GREP_NO_LINES = {"-c", "--count", "-q", "--quiet", "--silent", "-l", "--files-with-matches", "-L",
+                 "--files-without-match"}
+# Provider APIs a read with the project's token may go to without asking. Other hosts count when the project's own
+# .env or .env.example names them (GITEA_URL=https://git.example.com), so a token can't be sent somewhere new.
+API_HOSTS = re.compile(r"^(api\.cloudflare\.com|api\.digitalocean\.com|api\.github\.com|gitlab\.com|"
+                       r"management\.azure\.com|graph\.microsoft\.com|[a-z0-9-]+\.googleapis\.com|"
+                       r"api\.hetzner\.cloud|api\.linode\.com|api\.vultr\.com|api\.scaleway\.com|"
+                       r"api\.machines\.dev|api\.fly\.io|api\.vercel\.com|api\.netlify\.com|sentry\.io|"
+                       r"[a-z0-9-]+\.grafana\.net|api\.datadoghq\.(com|eu)|api\.pagerduty\.com|api\.tailscale\.com)$")
+
+
+def api_host_ok(host, cwd):
+    if API_HOSTS.match(host):
+        return True
+    root = repo_root(cwd)
+    for f in (".env", ".env.example", ".secret"):
+        text = read_text(os.path.join(root, f)) or ""
+        if re.search(r"^[^#\n]*=\s*['\"]?https://%s(?::\d+)?(?:[/'\"\s]|$)" % re.escape(host), text, re.M | re.I):
+            return True
+    git_config = read_text(os.path.join(root, ".git", "config")) or ""  # the project's own git remotes
+    return bool(re.search(r"^\s*url\s*=\s*(?:https://|ssh://)?(?:[^@/\s]+@)?%s(?:[:/]|$)" % re.escape(host),
+                          git_config, re.M | re.I))
+
+
 def check_segment(segment, bodies, cwd, depth, raw):
     try:
         tokens = shlex.split(segment, posix=True)
@@ -1791,6 +1816,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     # scanners hand a kubeconfig to their client to connect; they don't print it
     passed = {k + 1 for k, a in enumerate(args[:-1]) if name in {"kubescape", "prowler", "trivy", "kube-bench"}
               and a in {"--kubeconfig", "--kubeconfig-file"}}
+    if name in {"grep", "egrep", "fgrep", "zgrep", "rg"} and bundled(args, GREP_NO_LINES):
+        reads_files = False  # prints a count, a file name or nothing: no line of the file reaches the screen
     for k, a in enumerate(args):
         value = a.split("=", 1)[1] if "=" in a and not a.startswith("-") else a
         if k in passed:
@@ -1801,6 +1828,8 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
         return ask("copying a secret file", "it could then be read from the copy")
 
     if name in {"grep", "egrep", "fgrep", "zgrep", "rg"}:
+        if bundled(args, GREP_NO_LINES):
+            return None
         recursive = name == "rg" or bundled(args, {"-r", "-R", "--recursive", "--dereference-recursive"})
         if recursive:
             hidden = name != "rg" or bool(bundled(args, {"--hidden", "-u", "--no-ignore", "-uu", "-uuu"})) \
@@ -2000,11 +2029,15 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
     if name == "curl":
         if any(re.search(r"X-Amz-Signature=|[?&]Signature=|sig=", a) for a in args):
             return ask("`curl` to a signed URL", "a presigned URL can act with someone's credentials")
+        auth = any(a.split("=", 1)[0] in {"-H", "--header"} and (re.search(
+            r"authorization|x-api-key|token|cookie", a + " " + (args[k + 1] if k + 1 < len(args) else ""), re.I)
+            or any(re.search(r"\$\{?%s\b" % n, args[k + 1] if k + 1 < len(args) else a) for n in HEADER_VARS))
+            for k, a in enumerate(args))
         for k, a in enumerate(args):
             f = a.split("=", 1)[0]
-            if f in {"-H", "--header"} and re.search(r"authorization|x-api-key|token|cookie",
-                                                     a + " " + (args[k + 1] if k + 1 < len(args) else ""), re.I):
-                return ask("`curl` with an auth header", "acts with credentials against a remote API")
+            if auth and (f in {"-v", "--verbose", "--trace", "--trace-ascii", "--libcurl"} or
+                         re.fullmatch(r"-[a-zA-Z]*v[a-zA-Z]*", a)):
+                return secret("`curl %s` with an auth header" % f, "prints the token in the request headers")
             if f in {"-X", "--request"} or (a.startswith("-X") and len(a) > 2):
                 method = a[2:] if a.startswith("-X") and len(a) > 2 else (
                     a.split("=", 1)[1] if "=" in a else (args[k + 1] if k + 1 < len(args) else ""))
@@ -2015,6 +2048,14 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
                 return ask("`curl %s`" % f, "sends data, credentials or a signed request")
             if f in {"-o", "--output"} and k + 1 < len(args) and is_protected(args[k + 1], cwd):
                 return ask("`curl -o %s`" % args[k + 1], "writes a protected path")
+        if auth:  # a read: but a token sent to a host the project doesn't use could leak it (zero trust)
+            hosts = {m.group(1).lower() for a in args for m in [re.match(r"^https://([A-Za-z0-9.-]+)(?::\d+)?(?:[/?#]|$)", a)]
+                     if m}
+            other = [a for a in args if re.match(r"^[a-z]+://", a, re.I) and not a.lower().startswith("https://")]
+            unknown = sorted(h for h in hosts if not api_host_ok(h, cwd))
+            if other or not hosts or unknown:
+                return ask("`curl` with an auth header to `%s`" % (", ".join(unknown) or "a URL the guard can't read"),
+                           "sends a token to a host that isn't a known provider API or a host in this project's .env")
         return None
     if name == "wget":
         if any(a.startswith(("--post", "--method", "--body")) for a in args):
@@ -2185,6 +2226,7 @@ def check_segment_words(words, cwd, depth, raw, stdin_bodies=()):
 MKTEMP_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=[\"']?\$\(\s*mktemp\b[^)]*\)")
 STATUS_ASSIGN = re.compile(r"\b([A-Za-z_]\w*)=\$\?")
 KNOWN = {}  # variables set to literals earlier in the command being checked; inherited by sh -c / xargs
+HEADER_VARS = set()  # NAME="...$(read a project secret)..." used only as `curl -H "$NAME"`: a token header
 LOOPS = {}  # `for NAME in a b c` over literal words, NAME never set another way: the values NAME takes
 FOR_LOOP = re.compile(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*(?:;|\n)\s*do\b")
 CASE_PATTERNS = re.compile(r"(\bin|;;&?|;&)(\s+)\(?([^\s()|;&'\"`$]+(?:\s*\|\s*[^\s()|;&'\"`$]+)*)\)")
@@ -2205,8 +2247,8 @@ TEST_MODE = False  # inside a test file: tests mock tools by changing PATH, whic
 
 def check_command(command, cwd, depth=0, raw=None, test_mode=None):
     """The worst decision over every part of a shell command line, or None when all of it is safe."""
-    global KNOWN, FUNCS, TEST_MODE, LOOPS
-    outer_test, outer_loops = TEST_MODE, LOOPS
+    global KNOWN, FUNCS, TEST_MODE, LOOPS, HEADER_VARS
+    outer_test, outer_loops, outer_headers = TEST_MODE, LOOPS, HEADER_VARS
     raw_defs = command
     if test_mode is not None:
         TEST_MODE = test_mode
@@ -2241,12 +2283,21 @@ def check_command(command, cwd, depth=0, raw=None, test_mode=None):
             loops[n] = None  # set some other way too: its value can't be known
         elif loops.get(n, ()) is not None:
             loops[n] = loops.get(n, []) + values  # two loops over the same name: either list's values
+    headers = set(HEADER_VARS)
+    if not re.search(r"\bset\s+-[a-z]*x|xtrace|\bBASH_XTRACEFD\b", command):
+        for m in re.finditer(r"(?:^|[\s;&|(])([A-Za-z_]\w*)=\"[^\"$]*\$\(", command):
+            n = m.group(1)
+            uses = re.findall(r"(.{0,12})\$\{?%s\b\}?" % n, command)
+            if uses and all(re.search(r"(-H|--header)\s+\"[^\"]*$", u) for u in uses) and \
+                    len(re.findall(r"(?:^|[\s;&|(])%s\+?=" % n, command)) == 1:
+                headers.add(n)
     try:
+        HEADER_VARS = headers
         LOOPS = {n: v for n, v in loops.items() if v}
         KNOWN = known
         return _check_command(command, cwd, depth, raw, known)
     finally:
-        KNOWN, FUNCS, TEST_MODE, LOOPS = outer, outer_funcs, outer_test, outer_loops
+        KNOWN, FUNCS, TEST_MODE, LOOPS, HEADER_VARS = outer, outer_funcs, outer_test, outer_loops, outer_headers
 
 
 def _check_command(command, cwd, depth, raw, known):
@@ -2270,7 +2321,11 @@ def _check_command(command, cwd, depth, raw, known):
     except ValueError as exc:
         return ask("an unparseable command", "could not be parsed (%s)" % exc)
     for inner in subs:
-        hit = worse(hit, as_use(check_command(inner, cwd, depth + 1, raw), cwd))
+        h = as_use(check_command(inner, cwd, depth + 1, raw), cwd)
+        if h and h[1] == USE_SECRET and any(re.search(r"(?:^|[\s;&|(])%s=\"[^\"$]*\$\(%s\)" % (n, re.escape(inner)),
+                                                      raw) for n in HEADER_VARS):
+            h = None  # the token only goes into a curl header; curl checks where it is sent
+        hit = worse(hit, h)
         if hit and hit[2] == "deny":
             return hit
     for seg in segments:
